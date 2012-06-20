@@ -3,6 +3,7 @@
 /*
 * Copyright 2008, 2009, 2011 Free Software Foundation, Inc.
 * Copyright 2011 Range Networks, Inc.
+* Copyright 2012 Dmitri Soloviev <dmi3sol@gmail.com> for Fairwaves, Inc
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -96,6 +97,18 @@ void DCCHDispatchRR(const L3RRMessage* req, LogicalChannel *DCCH)
 		case L3RRMessage::AssignmentComplete:
 			AssignmentCompleteHandler(dynamic_cast<const L3AssignmentComplete*>(req),
 										dynamic_cast<TCHFACCHLogicalChannel*>(DCCH));
+			break;
+		case L3RRMessage::HandoverComplete:	// 04.08 sent on DCCH 9.1.16
+			
+			cout << "valid handover complete detected, DCCH=" << DCCH << endl;
+			
+			HandoverCompleteHandler(dynamic_cast<const L3HandoverComplete*>(req),DCCH);
+			break;
+		case L3RRMessage::HandoverFailure:	// 04.08 sent on DCCH 9.1.17
+			// we need to process it to allow new handover attempts
+			cout << "handover failure detected, DCCH=" << DCCH << endl;
+			
+			HandoverFailureHandler(dynamic_cast<const L3HandoverFailure*>(req),DCCH);
 			break;
 		default:
 			LOG(NOTICE) << "unhandled RR message " << MTI << " on " << *DCCH;

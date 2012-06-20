@@ -38,7 +38,7 @@
 #endif
 
 
-#define DEFAULT_CMD_PATH "/var/run/command"
+#define DEFAULT_CMD_PATH "command"
 #define DEFAULT_RSP_PATH "./response"
 
 

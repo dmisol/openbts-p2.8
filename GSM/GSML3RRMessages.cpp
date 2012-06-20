@@ -4,7 +4,8 @@
 /*
 * Copyright 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
 * Copyright 2011 Kestrel Signal Processing, Inc.
-*
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
+* 
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
 *
@@ -126,6 +127,14 @@ ostream& GSM::operator<<(ostream& os, L3RRMessage::MessageType val)
 			os << "RR Status"; break;
 		case L3RRMessage::ApplicationInformation:
 			os << "Application Information"; break;
+		case L3RRMessage::HandoverCommand:
+			os << "Handover Command"; break;
+		case L3RRMessage::HandoverComplete:
+			os << "Handover Complete"; break;
+		case L3RRMessage::HandoverFailure:
+			os << "Handover Failure"; break;
+		case L3RRMessage::PhysicalInformation:
+			os << "Physical Information"; break;
 		default: os << hex << "0x" << (int)val << dec;
 	}
 	return os;
@@ -152,6 +161,8 @@ L3RRMessage* GSM::L3RRFactory(L3RRMessage::MessageType MTI)
 		case L3RRMessage::ClassmarkEnquiry: return new L3ClassmarkEnquiry();
 		case L3RRMessage::MeasurementReport: return new L3MeasurementReport();
 		case L3RRMessage::ApplicationInformation: return new L3ApplicationInformation();
+		case L3RRMessage::HandoverComplete: return new L3HandoverComplete();
+		case L3RRMessage::HandoverFailure: return new L3HandoverFailure();
         // Partial support just to get along with some phones.
         case L3RRMessage::GPRSSuspensionRequest: return new L3GPRSSuspensionRequest();
 		default:
@@ -538,6 +549,72 @@ void L3AssignmentFailure::text(ostream& os) const
 	os << "cause=" << mCause;
 }
 
+void L3PhysicalInformation::writeBody( L3Frame &dest, size_t &wp ) const
+{
+	mTimingAdvance.writeV(dest, wp);
+        L2Frame *l2frame = (GSM::L2Frame *)&dest;
+        l2frame->primitive(UNIT_DATA);
+}
+
+size_t L3PhysicalInformation::l2BodyLength() const 
+{
+	size_t len = mTimingAdvance.lengthV();
+	return len;
+}
+
+void L3PhysicalInformation::text(ostream& os) const
+{
+	L3RRMessage::text(os);
+	os <<"TimingAdvance=("<<mTimingAdvance<<")";
+}
+
+void L3HandoverCommand::writeBody( L3Frame &dest, size_t &wp ) const
+{
+	mCellDescription.writeV(dest,wp);
+	mChannelDescription.writeV(dest, wp);
+	mHandoverReference.writeV(dest,wp);
+	mPowerCommand.writeV(dest, wp);
+}
+
+size_t L3HandoverCommand::l2BodyLength() const 
+{
+	size_t len = mCellDescription.lengthV();
+	len += mChannelDescription.lengthV();
+	len += mHandoverReference.lengthV();
+	len += mPowerCommand.lengthV();
+	return len;
+}
+
+void L3HandoverCommand::text(ostream& os) const
+{
+	L3RRMessage::text(os);
+	os <<"cellDescription=("<<mCellDescription<<")";
+	os <<"channelDescription=("<<mChannelDescription<<")";
+	os <<" handoverReference="<<mHandoverReference;
+	os <<" powerCommand="<<mPowerCommand;
+}
+
+void L3HandoverComplete::parseBody(const L3Frame& src, size_t &rp)
+{
+	mCause.parseV(src,rp);
+}
+
+void L3HandoverComplete::text(ostream& os) const
+{
+	L3RRMessage::text(os);
+	os << "cause=" << mCause;
+}
+
+void L3HandoverFailure::parseBody(const L3Frame& src, size_t &rp)
+{
+	mCause.parseV(src,rp);
+}
+
+void L3HandoverFailure::text(ostream& os) const
+{
+	L3RRMessage::text(os);
+	os << "cause=" << mCause;
+}
 
 
 void L3RRStatus::parseBody(const L3Frame& src, size_t &rp)

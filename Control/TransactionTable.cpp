@@ -4,6 +4,7 @@
 * Copyright 2008, 2010 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Process, Inc.
 * Copyright 2011, 2012 Range Networks, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under multiple licenses;
 * see the COPYING file in the main directory for licensing
@@ -40,6 +41,7 @@
 
 #include <Reporting.h>
 #include <Logger.h>
+#include <osipparser2/osip_message.h>
 #undef WARNING
 
 
@@ -102,7 +104,9 @@ TransactionEntry::TransactionEntry(
 	GSM::CallState wState,
 	const char *wMessage,
 	bool wFake)
-	:mID(gTransactionTable.newID()),
+	:mExistingTransaction(NULL),mProxyTransaction(false),mHOAllowed(true),
+	mAveragedMeasurements(7,MinimalMeasuredValue),
+	mID(gTransactionTable.newID()),
 	mSubscriber(wSubscriber),mService(wService),
 	mL3TI(gTMSITable.nextL3TI(wSubscriber.digits())),
 	mCalling(wCalling),
@@ -128,7 +132,9 @@ TransactionEntry::TransactionEntry(
 	const L3CMServiceType& wService,
 	unsigned wL3TI,
 	const L3CalledPartyBCDNumber& wCalled)
-	:mID(gTransactionTable.newID()),
+	:mExistingTransaction(NULL),mProxyTransaction(false),mHOAllowed(true),
+	mAveragedMeasurements(7,MinimalMeasuredValue),
+	mID(gTransactionTable.newID()),
 	mSubscriber(wSubscriber),mService(wService),
 	mL3TI(wL3TI),
 	mCalled(wCalled),
@@ -153,7 +159,9 @@ TransactionEntry::TransactionEntry(
 	GSM::LogicalChannel* wChannel,
 	const L3CMServiceType& wService,
 	unsigned wL3TI)
-	:mID(gTransactionTable.newID()),
+	:mExistingTransaction(NULL),mProxyTransaction(false),mHOAllowed(true),
+	mAveragedMeasurements(7,MinimalMeasuredValue),
+	mID(gTransactionTable.newID()),
 	mSubscriber(wSubscriber),mService(wService),
 	mL3TI(wL3TI),
 	mSIP(proxy,mSubscriber.digits()),
@@ -176,7 +184,9 @@ TransactionEntry::TransactionEntry(
 	GSM::LogicalChannel* wChannel,
 	const L3CalledPartyBCDNumber& wCalled,
 	const char* wMessage)
-	:mID(gTransactionTable.newID()),
+	:mExistingTransaction(NULL),mProxyTransaction(false),mHOAllowed(true),
+	mAveragedMeasurements(7,MinimalMeasuredValue),
+	mID(gTransactionTable.newID()),
 	mSubscriber(wSubscriber),
 	mService(GSM::L3CMServiceType::ShortMessage),
 	mL3TI(7),mCalled(wCalled),
@@ -199,7 +209,9 @@ TransactionEntry::TransactionEntry(
 	const char* proxy,
 	const L3MobileIdentity& wSubscriber,
 	GSM::LogicalChannel* wChannel)
-	:mID(gTransactionTable.newID()),
+	:mExistingTransaction(NULL),mProxyTransaction(false),mHOAllowed(true),
+	mAveragedMeasurements(7,MinimalMeasuredValue),
+	mID(gTransactionTable.newID()),
 	mSubscriber(wSubscriber),
 	mService(GSM::L3CMServiceType::ShortMessage),
 	mL3TI(7),
@@ -346,7 +358,7 @@ bool TransactionEntry::dead() const
 	// Dead if someone requested removal >3 min ago.
 	if (mRemoved) return true;
 	// Any GSM state other than Active for >3 min?
-	if (lGSMState!=GSM::Active) return true;
+	if ((lGSMState!=GSM::Active) && (!mProxyTransaction)) return true;
 	// Any SIP stte other than active for >3 min?
 	if (lSIPState !=SIP::Active) return true;
 	
@@ -491,6 +503,12 @@ void TransactionEntry::channel(GSM::LogicalChannel* wChannel)
 	runQuery(query);
 }
 
+bool TransactionEntry::handoverLock()
+{	ScopedLock lock(mLock);
+	if(! mHOAllowed) return false;
+	mHOAllowed = false; 
+	return true;
+}
 
 GSM::LogicalChannel* TransactionEntry::channel()
 {
@@ -594,6 +612,43 @@ SIP::SIPState TransactionEntry::MOCSendACK()
 	if (mRemoved) throw RemovedTransaction(mID);
 	ScopedLock lock(mLock);
 	SIP::SIPState state = mSIP.MOCSendACK();
+	echoSIPState(state);
+	return state;
+}
+
+SIP::SIPState TransactionEntry::HOSendACK()
+{
+	ScopedLock lock(mLock);
+	SIP::SIPState state = mSIP.HOSendACK();
+	echoSIPState(state);
+	return state;
+}
+
+SIP::SIPState TransactionEntry::HOSendINVITE(string whichBTS)
+{
+	ScopedLock lock(mLock);
+	LOG(WARNING) << "sending handover invite, BTS: " << whichBTS
+		<< ", L3TI: " << mL3TI;
+	LOG(WARNING) << "handover call ID is now " << mSIP.callID();
+	SIP::SIPState state = mSIP.HOSendINVITE(whichBTS);
+	echoSIPState(state);
+	return state;
+}
+
+SIP::SIPState TransactionEntry::HOSendREINVITE(char *ip, short port, unsigned codec)
+{
+	ScopedLock lock(mLock);
+	if(!mProxyTransaction)	mProxyTransaction = true;
+	SIP::SIPState state;
+	if(mService == L3CMServiceType::HandoverOriginatedCall){
+		LOG(ERR) << "the sequence of handovers, can't re-invite host directly";
+		state = mSIP.HOSendREINVITE(false, ip, port, codec);
+		//state = mSIP.HOSendREINVITE(true, ip, port, codec);
+	}
+	else {
+		LOG(ERR) << "the fist handover, re-invite host directly";
+		state = mSIP.HOSendREINVITE(true, ip, port, codec);
+	}
 	echoSIPState(state);
 	return state;
 }
@@ -814,6 +869,17 @@ bool TransactionEntry::sendINFOAndWaitForOK(unsigned info)
 	return mSIP.sendINFOAndWaitForOK(info,&mLock);
 }
 
+void TransactionEntry::sendINFO(const char * measurements)
+{
+	ScopedLock lock(mLock);
+	mSIP.sendINFO(measurements);
+}
+
+void TransactionEntry::HOCSendINFO(void *element){
+	ScopedLock lock(mLock);
+	mSIP.sendINFO(element);
+}
+
 void TransactionEntry::SIPUser(const char* IMSI)
 {
 	if (mRemoved) throw RemovedTransaction(mID);
@@ -865,7 +931,168 @@ bool TransactionEntry::terminationRequested()
 	return retVal;
 }
 
+
+// Handover-Originated transaction, target site
+TransactionEntry::TransactionEntry(const char* proxy,
+	const GSM::L3MobileIdentity& wSubscriber,
+	GSM::LogicalChannel* wChannel,
+	unsigned wL3TI,
+	const GSM::L3CMServiceType& wService, TransactionEntry * wExistingTransaction)
+
+	:mExistingTransaction(wExistingTransaction),mProxyTransaction(false),mHOAllowed(true),
+	mAveragedMeasurements(7,MinimalMeasuredValue),
+	mID(gTransactionTable.newID()),
+	mL3TI(wL3TI),
+	mSubscriber(wSubscriber),
+	mSIP(proxy,mSubscriber.digits()),
+	mService(wService),
+	mChannel(wChannel),
+	mGSMState(GSM::HOListening),
+	mTerminationRequested(false),
+	mRemoved(false),
+	mNumSQLTries(gConfig.getNum("Control.NumSQLTries"))
+{
+	LOG(INFO) << "starting transaction for handover, " << mChannel;
+	initTimers();
+}
+
+// Handover attempt at the initial site
+TransactionEntry::TransactionEntry(TransactionEntry *wOldTransaction, 
+	const GSM::L3MobileIdentity& wSubscriber,
+	string whichBTS,
+	unsigned wL3TI, string wDRTPIp, short wDRTPPort, unsigned wCodec)
+	:mExistingTransaction(NULL),mProxyTransaction(false),mHOAllowed(true),
+	mAveragedMeasurements(7,MinimalMeasuredValue),
+	mOldTransaction(wOldTransaction),
+	mSubscriber(wSubscriber),
+	mL3TI(wOldTransaction->L3TI()),
+	mSIP(whichBTS.c_str(),mSubscriber.digits() ,
+		wL3TI, wDRTPIp, wDRTPPort, wCodec),
+	mID(gTransactionTable.newID()),
+	mService(GSM::L3CMServiceType::OutgoingHandover),
+//	mCalled(wCalled),
+	mGSMState(GSM::NullState),
+	mNumSQLTries(gConfig.getNum("Control.NumSQLTries")),
+	mChannel(NULL),
+	mTerminationRequested(false),
+	mRemoved(false)
+
+{
+	LOG(DEBUG) << "\"temporary\" transaction for outgoing handover, created";
+	
+	HOSendINVITE(whichBTS);
+	// FIXME timers are not needed here..
+	initTimers();
+}
+
+void TransactionEntry::HOSendOK(osip_message_t * msg){
+	ScopedLock lock(mLock);
+	mSIP.HOSendOK(msg);
+}
+
+SIP::SIPState TransactionEntry::HOCSendHandoverAck(unsigned wHandoverReference, 
+		unsigned wBCC, unsigned wNCC, unsigned wC0,
+		const char *channelDescription){
+
+	LOG(ERR) << "handover: SIP 183, proceeding" << 
+		"\n\t Handover:" << wHandoverReference <<
+		"\n\t Cell:" << 
+		" BCC= " << wBCC << 
+		", NCC=" << wNCC <<
+		", C0=" << wC0 << 
+		"\n\t Channel: " << *channelDescription;
+	char buf[300];
+	sprintf(buf,"cell: BCC=%d NCC=%d ARFCN=%d\nchan: %s\nreference: %d\n",wBCC,wNCC,wC0,channelDescription,wHandoverReference);
+
+	ScopedLock lock(mLock);
+	SIP::SIPState state = mSIP.HOCSendProceeding(buf);
+	
+//	mHandoverEntry->status("handover, prep. chan desc(7)");
+	
+	echoSIPState(state);
+	return state;
+
+}
+
+
+
+SIP::SIPState TransactionEntry::HOCSendOK(short rtpPort, unsigned codec){
+	LOG(ERR) << "sending 200 OK (handover completed), port=" << rtpPort << ", codec=" << codec;
+	ScopedLock lock(mLock);
+	SIP::SIPState state = mSIP.HOCSendOK(rtpPort,codec);
+	echoSIPState(state);
+	return state;
+}
+
+osip_message_t * TransactionEntry::HOGetSIPMessage(){
+	osip_message_t *msg;
+	msg = mSIP.get_message();
+	if(msg != NULL) {
+		LOG(ERR) << "SIP for outgo handover";
+		if(msg->status_code) {
+			LOG(ERR) << "saving resp for outgo handover";
+			mSIP.saveResponse(msg);
+		}
+	}	
+	return msg;
+}
+
+
+int TransactionEntry::HOGetSIPResponse(){
+	osip_message_t *msg; 
+	msg = mSIP.HOGetResp();
+	if(msg != NULL) {
+		LOG(ERR) << "SIP for outgo handover " << msg->status_code;
+		if(msg->status_code) {
+			mSIP.saveResponse(msg);
+			LOG(ERR) << "handover, SIP msg saved " << msg->status_code;
+			int code = msg->status_code;
+			osip_message_free(msg);
+			return code;
+		}
+	}	
+	return 0;
+}
+
+
+SIP::SIPState TransactionEntry::HOCTimeout(){
+	// FIXME not sure if need to do it: no one cares..
+	LOG(ERR) << "handover: sending 480 Temporarily Unavailable";
+	ScopedLock lock(mLock);
+	SIP::SIPState state = mSIP.HOCSendTemporarilyUnavailable();
+	echoSIPState(state);
+	return state;
+}
+
+
+// Send Handover Command to move the current call
+void TransactionEntry::HOSendHandoverCommand(GSM::L3CellDescription wCell,
+		GSM::L3ChannelDescription wChan, unsigned wHandoverReference){
+/*
+	if(!mHOAllowed) {
+		LOG(ERR) << "handover is not allowed now; handover Command is not sent";
+		return;
+	}
+*/
+	LOG(ERR) << "handover Command, " << wCell << ", " << wChan << ", " << wHandoverReference;
+//	mHOAllowed = false;
+	mChannel->send(L3HandoverCommand(wCell, wChan, wHandoverReference));
+}
+
+
+void TransactionEntry::cutHandoverTail(GSM::LogicalChannel* wChannel){
+// remove "proxy" flag
+// send bye to the tail
+	LOG(ERR) << "making transaction \'a normal one\'..";
+	ScopedLock lock(mLock);
+	LOG(ERR) << "making transaction \'a normal one\'....";
+	mProxyTransaction = false;
+	gBTS.handover().removeProxy(this);
+	mChannel = wChannel;
+}
+
 void TransactionTable::init(const char* path)
+	// This assumes the main application uses sdevrandom.
 {
 	// This assumes the main application uses sdevrandom.
 	mIDCounter = random();
@@ -926,6 +1153,33 @@ TransactionEntry* TransactionTable::find(unsigned key)
 	if (itr->second->deadOrRemoved()) return NULL;
 	return (itr->second);
 }
+
+
+TransactionEntry* TransactionTable::findLegacyTransaction(const L3MobileIdentity& mobileID)
+{
+	// Yes, it's linear time.
+	// Since clearDeadEntries is also linear, do that here, too.
+	clearDeadEntries();
+
+	// Brute force search.
+	ScopedLock lock(mLock);
+	for (TransactionMap::iterator itr = mTable.begin(); itr!=mTable.end(); ++itr) {
+		if (itr->second->deadOrRemoved()) continue;
+		if (itr->second->subscriber() != mobileID) continue;
+		if ((itr->second->service() != GSM::L3CMServiceType::HandoverOriginatedCall)&&
+		( (itr->second->service() != GSM::L3CMServiceType::MobileOriginatedCall) && 
+		(itr->second->service() != GSM::L3CMServiceType::MobileTerminatedCall) ))
+			continue;
+		return itr->second;
+	}
+	return NULL;
+}
+
+
+
+
+
+
 
 
 void TransactionTable::innerRemove(TransactionMap::iterator itr)
@@ -995,23 +1249,21 @@ TransactionEntry* TransactionTable::find(const GSM::LogicalChannel *chan)
 {
 	LOG(DEBUG) << "by channel: " << *chan << " (" << chan << ")";
 
-	ScopedLock lock(mLock);
-
 	// Yes, it's linear time.
 	// Since clearDeadEntries is also linear, do that here, too.
 	clearDeadEntries();
 
 	// Brute force search.
-	// This search assumes in order by transaction ID.
-	TransactionEntry *retVal = NULL;
+	ScopedLock lock(mLock);
 	for (TransactionMap::iterator itr = mTable.begin(); itr!=mTable.end(); ++itr) {
 		if (itr->second->deadOrRemoved()) continue;
 		const GSM::LogicalChannel* thisChan = itr->second->channel();
-		if ((void*)thisChan != (void*)chan) continue;
-		retVal = itr->second;
+		if(thisChan == NULL)	continue;
+		//LOG(DEBUG) << "looking for " << *chan << " (" << chan << ")" << ", found " << *(thisChan) << " (" << thisChan << ")";
+		if( strcmp(thisChan->descriptiveString(),chan->descriptiveString()) == 0 ) return itr->second;
 	}
 	//LOG(DEBUG) << "no match for " << *chan << " (" << chan << ")";
-	return retVal;
+	return NULL;
 }
 
 
@@ -1029,6 +1281,12 @@ TransactionEntry* TransactionTable::findBySACCH(const GSM::SACCHLogicalChannel *
 	TransactionEntry *retVal = NULL;
 	for (TransactionMap::iterator itr = mTable.begin(); itr!=mTable.end(); ++itr) {
 		if (itr->second->deadOrRemoved()) continue;
+
+		if(itr->second->SIPState() == HO_Proxy) {
+			LOG(ERR) << "skipping handover proxy in find()";
+			continue;
+		}
+
 		const GSM::LogicalChannel* thisChan = itr->second->channel();
 		if (thisChan->SACCH() != chan) continue;
 		retVal = itr->second;
@@ -1051,6 +1309,10 @@ TransactionEntry* TransactionTable::find(GSM::TypeAndOffset desc)
 	for (TransactionMap::iterator itr = mTable.begin(); itr!=mTable.end(); ++itr) {
 		if (itr->second->deadOrRemoved()) continue;
 		const GSM::LogicalChannel* thisChan = itr->second->channel();
+		
+		// if HO - no valid channel
+		if(thisChan == NULL)	continue;
+		
 		if (thisChan->typeAndOffset()!=desc) continue;
 		return itr->second;
 	}
@@ -1095,6 +1357,7 @@ bool TransactionTable::isBusy(const L3MobileIdentity& mobileID)
 		if (itr->second->subscriber() != mobileID) continue;
 		GSM::L3CMServiceType service = itr->second->service();
 		bool speech =
+			service==GSM::L3CMServiceType::HandoverOriginatedCall ||
 			service==GSM::L3CMServiceType::EmergencyCall ||
 			service==GSM::L3CMServiceType::MobileOriginatedCall ||
 			service==GSM::L3CMServiceType::MobileTerminatedCall;
@@ -1292,4 +1555,119 @@ bool TransactionTable::duplicateMessage(const GSM::L3MobileIdentity& mobileID, c
 
 }
 
+bool TransactionEntry::HOSetupFinished(){
+// outgoing handover setup logic
+// returns true if fails
+// else transforms both transactions to proxy
+
+	int resp_code = HOGetSIPResponse();
+	
+	if(resp_code == 0) return false;
+	
+	LOG(ERR) << "outgoing handover attempt, state is " << SIPState() <<
+		", SIP resp is "<< resp_code;
+
+	switch(resp_code){
+		case 183:
+			char cell[100];
+			char chan[100];
+			unsigned reference;
+			
+			if(handoverTarget(cell, chan , &reference)){
+
+				// now we need to issue Handover Command
+				LOG(ERR) << "handover to " << cell << "; " << chan << "; " << reference;
+				unsigned bcc, ncc, c0 ;
+				unsigned tn, tsc, arfcn;
+				char *p;
+				p = strstr(cell,"BCC="); 
+				sscanf(p+strlen("BCC="),"%u",&bcc);
+				p = strstr(cell,"NCC="); 
+				sscanf(p+strlen("NCC="),"%u",&ncc);
+				p = strstr(cell,"ARFCN="); 
+				sscanf(p+strlen("ARFCN="),"%u",&c0);
+
+				p = strstr(chan,"TN="); 
+				sscanf(p+strlen("TN="),"%u",&tn);
+				p = strstr(chan,"TSC="); 
+				sscanf(p+strlen("TSC="),"%u",&tsc);				
+				p = strstr(chan,"ARFCN="); 
+				sscanf(p+strlen("ARFCN="),"%u",&arfcn);
+
+				LOG(ERR) << "sending handover Command for transaction" << callingTransaction();
+				
+				callingTransaction()->HOSendHandoverCommand(
+					L3CellDescription(bcc,ncc,c0),
+					L3ChannelDescription(TCHF_0,tn,tsc,arfcn),
+					reference);
+				
+				LOG(ERR) << "changing state to " << SIPState();
+				return false;
+			}
+			else LOG(ERR) << "handover target is unknown";
+			return false;
+		case 480: return true;
+		case 200:		
+			// we were waiting for SIP 200
+			// to send re-invite and turn the original transaction into proxy
+			LOG(ERR) << "got SIP 200 OK for handover, decoding sdp";
+		
+			char ip[20], port_str[10];
+			short port;
+			unsigned codec;
+		
+			reinviteTarget(ip, port_str, &codec);
+			port = atoi(port_str);
+			HOSendACK();
+			callingTransaction()->HOSendREINVITE(ip, port, codec);
+
+			// turn an old transaction into proxy, ea
+			// 1) release radio resources (old transaction)
+			// 2) mark transaction as handover proxy
+			// this is performed in the following way:
+			// inside HOSendREINVITE()
+			// mProxyTransaction is set to TRUE
+			// when a handset disappears at uplink,
+			// this prevents from killing SIP
+				
+			return false;
+		}
+	LOG(ERR) << "outgoing handover SM, no idea how reached this point";
+	return false;
+}
+
+/* just now - dummy functions */
+
+void TransactionEntry::HOProxy_forward_msg(osip_message_t *event){
+	LOG(ERR) << "handover debug: DUMMY function (!)" << event->sip_method;
+	osip_message_free(event);
+	return;
+}
+
+void TransactionEntry::HOSendBYE(bool flip_loop){
+	if(!flip_loop) mSIP.HOSendBYE();
+	LOG(ERR) << "handover: flipping loops not implemented yet";
+}
+
+vector <int> TransactionEntry::average(GSM::L3MeasurementResults wMeasurementResults, double wWeights){
+	/*LOG(ERR) << "meas 1, No=" << wMeasurementResults.NO_NCELL();
+	for(int i=0;i<wMeasurementResults.NO_NCELL();i++){
+		mAveragedMeasurements[i] = wMeasurementResults.RXLEV_NCELL_dBm(i);
+	}
+	LOG(ERR) << "meas 2";
+	mAveragedMeasurements[6] = wMeasurementResults.RXLEV_FULL_SERVING_CELL_dBm();
+*/
+
+	for(int i=0;i<wMeasurementResults.NO_NCELL();i++){
+		mAveragedMeasurements[i] = 
+			(int)((double)(wMeasurementResults.RXLEV_NCELL_dBm(i)*wWeights + (1-wWeights)*mAveragedMeasurements[i]));
+	}
+	
+	mAveragedMeasurements[6] = 
+			(int)((double)(wMeasurementResults.RXLEV_FULL_SERVING_CELL_dBm()*wWeights + (1-wWeights)*mAveragedMeasurements[6]));
+
+	
+	
+	return mAveragedMeasurements;
+}
 // vim: ts=4 sw=4

@@ -1,5 +1,6 @@
 /*
 * Copyright 2008 Free Software Foundation, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -26,6 +27,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+
+#include <Logger.h>
 
 #include <signal.h>
 #include <stdlib.h>
@@ -69,13 +72,45 @@ bool SIP::get_rtp_params(const osip_message_t * msg, char * port, char * ip_addr
 	if (!sdp_body) return false;
 	char * sdp_str = sdp_body->body;
 	if (!sdp_str) return false;
-
+	
 	sdp_message_t * sdp;
 	sdp_message_init(&sdp);
 	sdp_message_parse(sdp, sdp_str);
-
+	
+	char *p;
+	p = strstr(sdp_str,"c=");
+	p+= strlen("c=");
+	char buf[100];
+	sscanf(p+6,"%s",buf);
+		
+	//LOG(ERR) << "ip " << sdp->c_connection->c_addr;
 	strcpy(port,sdp_message_m_port_get(sdp,0));
-	strcpy(ip_addr, sdp->c_connection->c_addr);
+	strcpy(ip_addr, buf);
+	return true;
+}
+
+bool SIP::get_handover_params(const osip_message_t * msg, char * cell, char * chan , unsigned *reference)
+{
+	osip_body_t * body = (osip_body_t*)osip_list_get(&msg->bodies, 0);
+	if (!body) return false;
+	char * ho_str = body->body;
+	if (!ho_str) return false;
+
+	char *p;
+	p = strstr(ho_str,"cell:");
+	if(!p) return false;
+	strcpy(cell, p+strlen("cell:"));
+	LOG(ERR) << "handover cell= " << cell;
+	
+	p = strstr(ho_str,"chan:");
+	if(!p) return false;
+	strcpy(chan, p+strlen("chan:"));
+	LOG(ERR) << "handover chan= " << chan;
+
+	p = strstr(ho_str,"reference:");
+	if(!p) return false;
+	sscanf(p+strlen("reference:"),"%u",reference);
+	LOG(ERR) << "handover ref= " << reference;
 	return true;
 }
 

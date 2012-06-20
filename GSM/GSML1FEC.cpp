@@ -1,6 +1,7 @@
 /*
 * Copyright 2008-2010 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Processing, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -31,6 +32,7 @@
 #include "GSMConfig.h"
 #include "GSMTDMA.h"
 #include "GSMTAPDump.h"
+#include "GSMLogicalChannel.h"
 #include <ControlCommon.h>
 #include <Globals.h>
 #include <TRXManager.h>
@@ -43,6 +45,7 @@
 using namespace std;
 using namespace GSM;
 
+extern TransceiverManager gTRX;
 
 /*
 
@@ -172,7 +175,43 @@ unsigned encodePower(int power)
 
 //@}
 
+bool L1Decoder::decodeRACHBurst(const RxBurst &burst, Parity &wParity, BitVector &wU, BitVector &wD, unsigned &value){
+    	// The L1 FEC for the RACH is defined in GSM 05.03 4.6.
 
+	// Decode the burst.
+	const SoftVector e(burst.segment(49,36));
+	e.decode(mVCoder,wU);
+
+	// To check validity, we have 4 tail bits and 6 parity bits.
+	// False alarm rate for random inputs is 1/1024.
+
+	// Check the tail bits -- should all the zero.
+	if (wU.peekField(14,4)) {
+		OBJLOG(ERR) << "RACH decode wrong tail bits" << wU.peekField(14,4);
+		//return false;
+	}
+
+	// Check the parity.
+	// The parity word is XOR'd with the BSIC. (GSM 05.03 4.6.)
+	unsigned sentParity = ~wU.peekField(8,6);
+	unsigned checkParity = wD.parity(wParity);
+	unsigned encodedBSIC = (sentParity ^ checkParity) & 0x03f;
+	if (encodedBSIC != gBTS.BSIC()) {
+		OBJLOG(ERR) << "RACH decode wrong parity: "<< sentParity << ", "<< checkParity <<", " << encodedBSIC << ", BSCI" << gBTS.BSIC();
+		//return false;
+	}
+
+	// We got a valid RACH burst.
+	// The "payload" is an 8-bit field, "RA", defined in GSM 04.08 9.1.8.
+	// The channel assignment procedure is in GSM 04.08 3.3.1.1.3.
+	// It requires knowledge of the RA value and the burst receive time.
+	// The RACH L2 is so thin that we don't even need code for it.
+	// Just pass the required information directly to the control layer.
+
+	wD.LSB8MSB();
+	value = wD.peekField(0,8);
+	return true;
+}
 
 
 
@@ -467,44 +506,14 @@ void RACHL1Decoder::start()
 
 void RACHL1Decoder::writeLowSide(const RxBurst& burst)
 {
-	// The L1 FEC for the RACH is defined in GSM 05.03 4.6.
-
-	// Decode the burst.
-	const SoftVector e(burst.segment(49,36));
-	e.decode(mVCoder,mU);
-
-	// To check validity, we have 4 tail bits and 6 parity bits.
-	// False alarm rate for random inputs is 1/1024.
-
-	// Check the tail bits -- should all the zero.
-	if (mU.peekField(14,4)) {
-		countBadFrame();
-		return;
-	}
-
-	// Check the parity.
-	// The parity word is XOR'd with the BSIC. (GSM 05.03 4.6.)
-	unsigned sentParity = ~mU.peekField(8,6);
-	unsigned checkParity = mD.parity(mParity);
-	unsigned encodedBSIC = (sentParity ^ checkParity) & 0x03f;
-	if (encodedBSIC != gBTS.BSIC()) {
-		countBadFrame();
-		return;
-	}
-
-	// We got a valid RACH burst.
-	// The "payload" is an 8-bit field, "RA", defined in GSM 04.08 9.1.8.
-	// The channel assignment procedure is in GSM 04.08 3.3.1.1.3.
-	// It requires knowledge of the RA value and the burst receive time.
-	// The RACH L2 is so thin that we don't even need code for it.
-	// Just pass the required information directly to the control layer.
-
-	countGoodFrame();
-	mD.LSB8MSB();
-	unsigned RA = mD.peekField(0,8);
-	OBJLOG(INFO) <<"RACHL1Decoder received RA=" << RA << " at time " << burst.time()
+	unsigned RA;
+	if(decodeRACHBurst(burst, mParity, mU, mD, RA)){
+		countGoodFrame();
+		OBJLOG(ERR) <<"RACHL1Decoder received RA=" << RA << " at time " << burst.time()
 		<< " with RSSI=" << burst.RSSI() << " timingError=" << burst.timingError();
-	gBTS.channelRequest(new Control::ChannelRequestRecord(RA,burst.time(),burst.RSSI(),burst.timingError()));
+		gBTS.channelRequest(new Control::ChannelRequestRecord(RA,burst.time(),burst.RSSI(),burst.timingError()));
+	}
+	else countBadFrame();
 }
 
 
@@ -1044,7 +1053,8 @@ TCHFACCHL1Decoder::TCHFACCHL1Decoder(
 	:XCCHL1Decoder(wCN,wTN, wMapping, wParent),
 	mTCHU(189),mTCHD(260),
 	mClass1_c(mC.head(378)),mClass1A_d(mTCHD.head(50)),mClass2_c(mC.segment(378,78)),
-	mTCHParity(0x0b,3,50)
+	mTCHParity(0x0b,3,50),
+	mParityHA(0x06f,6,8),mUHA(18),mDHA(mUHA.head(8))
 {
 	for (int i=0; i<8; i++) {
 		mI[i] = SoftVector(114);
@@ -1058,10 +1068,13 @@ TCHFACCHL1Decoder::TCHFACCHL1Decoder(
 
 void TCHFACCHL1Decoder::writeLowSide(const RxBurst& inBurst)
 {
-	OBJLOG(DEBUG) << "TCHFACCHL1Decoder " << inBurst;
+	OBJLOG(INFO) << "TCHFACCHL1Decoder " << inBurst;
 	// If the channel is closed, ignore the burst.
 	if (!active()) {
-		OBJLOG(DEBUG) << "TCHFACCHL1Decoder not active, ignoring input";
+             if(gTRX.ARFCN(0)->handover(TN()) )        // just for evaluating; it might be reasonable to activate TCH for handover
+                 processBurst(inBurst);
+             else
+		OBJLOG(DEBUG) << "TCHFACCHL1Decoder not active, ignoring input, tn=" << TN();
 		return;
 	}
 	processBurst(inBurst);
@@ -1080,6 +1093,32 @@ bool TCHFACCHL1Decoder::processBurst( const RxBurst& inBurst)
 	// We could do that as a double-check against putting garbage into
 	// the interleaver or accepting bad parameters.
 
+	//OBJLOG(ERR) << "burst at tn=" << TN();
+	if(gTRX.ARFCN(0)->handover( TN() )){
+		OBJLOG(DEBUG) << "Trying to decode as Access Burst, same TN()";
+		
+		unsigned HR;
+		if(decodeRACHBurst(inBurst, mParityHA, mUHA, mDHA, HR)){
+			OBJLOG(DEBUG) <<"handover Access Detected at "<< TN() <<", HandoverReference=" << HR <<"\n";
+			if(HR == gTRX.ARFCN(0)->getHandoverReference( TN() )){
+				OBJLOG(DEBUG) <<"handover Reference ok.. " << HR << "\n";
+				
+				int initialTA = (int)(inBurst.timingError() + 0.5F);
+				if (initialTA<0) initialTA=0;
+				if (initialTA>62) initialTA=62;
+				
+				cout << "valid handover access detected, reference=" << HR << endl;
+				
+				gBTS.handover().handoverAccess(TN(),initialTA);
+				//Control::HandoverEntry *he = gBTS.handover().find_handover(TN());
+				//if(he) he->HandoverAccessDetected(initialTA);
+				//else OBJLOG(ERR) << "unable to find handover entry @" << TN();
+			}
+			else OBJLOG(ALERT) <<"Wrong handover Reference " << HR << "\n";
+		return false;}
+	}
+//	else OBJLOG(ERR) << "Normal burst!!!";
+	
 	// The reverse index runs 0..7 as the bursts arrive.
 	// It is the "B" index of GSM 05.03 3.1.3 and 3.1.4.
 	int B = mMapping.reverseMapping(inBurst.time().FN()) % 8;

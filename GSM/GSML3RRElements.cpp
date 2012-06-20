@@ -5,6 +5,7 @@
 /*
 * Copyright 2008, 2009 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Processing, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -710,6 +711,46 @@ void L3SI3RestOctets::text(ostream& os) const
 	}
 }
 
+
+/* dmisol GSM 04.08 10.5.2.15 */
+void L3HandoverReference::writeV( L3Frame &dest, size_t &wp ) const
+{
+	dest.writeField(wp, mValue, 8);	
+}
+
+void L3HandoverReference::parseV( const L3Frame &src, size_t &rp )
+{
+	mValue = src.readField(rp, 8);
+}
+
+void L3HandoverReference::text(ostream& os) const
+{
+	os << "0x" << hex << mValue << dec;
+}
+
+
+L3CellDescription::L3CellDescription()
+		:L3ProtocolElement()
+{	// for HO CMD to the same site
+	mBCC 	= gConfig.getNum("GSM.Identity.BSIC.BCC");
+	mNCC 	= gConfig.getNum("GSM.Identity.BSIC.NCC");
+	mARFCN 	= gConfig.getNum("GSM.Radio.C0");
+}
+
+void L3CellDescription::writeV(L3Frame& dest, size_t &wp) const
+{
+	dest.writeField(wp,(mARFCN>>8),2);
+	dest.writeField(wp,mNCC,3);
+	dest.writeField(wp,mBCC,3);
+	dest.writeField(wp,(mARFCN&0xFF),8);
+}
+
+void L3CellDescription::text(ostream& os) const
+{
+	os << "ARFCN=" <<  mARFCN;
+	os << " NCC=" <<  mNCC;
+	os << " BCC=" <<  mBCC;
+}
 
 
 // vim: ts=4 sw=4

@@ -1,5 +1,6 @@
 /*
 * Copyright 2008 Free Software Foundation, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -62,6 +63,8 @@ bool get_owner_ip( osip_message_t * msg, char * o_addr );
 
 /** Get RTP parameters; return NULL if none found. */
 bool get_rtp_params(const osip_message_t * msg, char * port, char * ip_addr );
+
+bool get_handover_params(const osip_message_t * msg, char * cell, char * chan , unsigned *reference);
 
 void make_tag( char * tag );
 

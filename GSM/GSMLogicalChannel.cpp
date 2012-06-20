@@ -270,9 +270,28 @@ void SACCHLogicalChannel::serviceLoop()
 				L3MeasurementReport* measurement = dynamic_cast<L3MeasurementReport*>(rrMessage);
 				if (measurement) {
 					mMeasurementResults = measurement->results();
+					
+					// ATTENTION: 1 means "invalid"
+					// FIXME: it might be useful to change decoding
+					if(mMeasurementResults.MEAS_VALID()){
+						LOG(ERR) << "invalid measurement report" << mMeasurementResults;
+						delete rrMessage;
+						continue;
+					}
 					OBJLOG(DEBUG) << "SACCH measurement report " << mMeasurementResults;
 					// Add the measurement results to the table
 					// Note that the typeAndOffset of a SACCH match the host channel.
+					
+					if(this){
+						const GSM::LogicalChannel * chan = this;
+						
+//						OBJLOG(ERR) << "SACCH measurement report: looking 4 transaction ";
+						Control::TransactionEntry *transaction = gTransactionTable.find(chan);
+//						OBJLOG(ERR) << "SACCH measurement report: transaction found";
+						if(transaction) {
+							gBTS.handover().BTSDecision(transaction, mMeasurementResults);							
+						}
+					}
 					gPhysStatus.setPhysical(this, mMeasurementResults);
 				} else {
 					OBJLOG(NOTICE) << "SACCH SAP0 sent unaticipated message " << rrMessage;

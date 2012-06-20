@@ -1,12 +1,9 @@
 /**@file Declarations for TransactionTable and related classes. */
 /*
-* Copyright 2008, 2009, 2010 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Processing, Inc.
 * Copyright 2011, 2012 Range Networks, Inc.
-*
-* This software is distributed under multiple licenses;
-* see the COPYING file in the main directory for licensing
-* information for this specific distribuion.
+* Copyright 2008-2011 Free Software Foundation, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This use of this software may be subject to additional restrictions.
 * See the LEGAL file in the main directory for details.
@@ -31,6 +28,7 @@
 #include <Timeval.h>
 #include <Sockets.h>
 
+//#include <osip2/osip.h>
 
 #include <GSML3CommonElements.h>
 #include <GSML3MMElements.h>
@@ -43,6 +41,8 @@ class LogicalChnanel;
 class SACCHLogicalChannel;
 }
 
+#include "RadioResource.h"
+
 
 
 struct sqlite3;
@@ -50,6 +50,8 @@ struct sqlite3;
 
 /**@namespace Control This namepace is for use by the control layer. */
 namespace Control {
+
+class HandoverEntry;
 
 typedef std::map<std::string, GSM::Z100Timer> TimerTable;
 
@@ -64,6 +66,8 @@ typedef std::map<std::string, GSM::Z100Timer> TimerTable;
 class TransactionEntry {
 
 	private:
+	
+#define MinimalMeasuredValue	-110
 
 	mutable Mutex mLock;					///< thread-safe control, shared from gTransactionTable
 
@@ -89,16 +93,28 @@ class TransactionEntry {
 	GSM::CallState mGSMState;				///< the GSM/ISDN/Q.931 call state
 	Timeval mStateTimer;					///< timestamp of last state change.
 	TimerTable mTimers;						///< table of Z100-type state timers
+	
+	// if there is a handover attempt, while IMSI is known here already
+	// this means loop must be removed after ho succeeds
+	TransactionEntry * mExistingTransaction;
 
 	unsigned mNumSQLTries;					///< number of SQL tries for DB operations
 
 	GSM::LogicalChannel *mChannel;			///< current channel of the transaction
 
 	bool mTerminationRequested;
+	
+	bool mProxyTransaction;
+	
+	TransactionEntry *mOldTransaction;	// a link to original call, used for outgoing handovers
+	
+	bool mHOAllowed;	// to prevent from several handover attempts for a single call
 
 	volatile bool mRemoved;			///< true if ready for removal
 
 	bool mFake;					///true if this is a fake message generated internally	
+
+	std::vector <int> mAveragedMeasurements;
 
 	public:
 
@@ -139,10 +155,23 @@ class TransactionEntry {
 		const GSM::L3MobileIdentity& wSubscriber,
 		GSM::LogicalChannel* wChannel);
 
-
+	/** Form for "handover-originated" calls */
+	TransactionEntry(const char* proxy,
+		const GSM::L3MobileIdentity& wSubscriber,
+		GSM::LogicalChannel* wChannel,
+		unsigned wL3TI,
+		const GSM::L3CMServiceType& wService, TransactionEntry * wExistingTransaction);
+//	void addHandoverEntry(HandoverEntry* wHandoverEntry);
+	
+	/** Form for "temporary" transaction to support outgoing handover*/
+	TransactionEntry(TransactionEntry *wOldTransaction, 
+		const GSM::L3MobileIdentity& wSubscriber,
+		string whichBTS,
+		unsigned wL3TI, string wDRTPIp, short wDRTPPort, unsigned wCodec);
+	
 	/** Delete the database entry upon destruction. */
 	~TransactionEntry();
-
+		
 	/**@name Accessors. */
 	//@{
 	unsigned L3TI() const;
@@ -174,6 +203,21 @@ class TransactionEntry {
 	GSM::CallState GSMState() const;
 	void GSMState(GSM::CallState wState);
 
+	//const HandoverEntry * handoverEntry() const { return mHandoverEntry; }
+//	HandoverEntry * handoverEntry() { return mHandoverEntry; }
+	
+	// needed to create a temporary transaction for outgoing handover
+	short destRTPPort() const { return mSIP.destRTPPort(); }
+	char* destRTPIp() { return mSIP.destRTPIp(); }
+	short codec() const { return mSIP.codec(); }
+	TransactionEntry* callingTransaction() { return mOldTransaction; }
+	
+	TransactionEntry* existingTransaction() { return mExistingTransaction; }
+	
+	void cutHandoverTail(GSM::LogicalChannel* wChannel);
+	//@}
+
+
 	/** Initiate the termination process. */
 	void terminate() { ScopedLock lock(mLock); mTerminationRequested=true; }
 
@@ -200,7 +244,24 @@ class TransactionEntry {
 	SIP::SIPState SOSSendACK() { return MOCSendACK(); }
 	void SOSInitRTP() { MOCInitRTP(); }
 
+	// few functions below are needed to serve outgoing handover inside a 
+	// "temporary" transaction
+		SIP::SIPState HOSendINVITE(string whichBTS);
+		
+		// send 200 Ok  for re-invite from handover chain
+		void HOSendOK(osip_message_t * msg);
+		SIP::SIPState HOSendACK();
+		SIP::SIPState HOSendREINVITE(char *ip, short port, unsigned codec);
+	
+	// get a raw message for CallID
+	osip_message_t * HOGetSIPMessage();
+	int HOGetSIPResponse();
 
+	// outgoing handover setup logic to be used inside handover thread
+	bool HOSetupFinished();
+
+	void HOTurnToProxy();
+	
 	SIP::SIPState MTCSendTrying();
 	SIP::SIPState MTCSendRinging();
 	SIP::SIPState MTCCheckForACK();
@@ -231,6 +292,8 @@ class TransactionEntry {
 	SIP::SIPState MTSMSSendOK();
 
 	bool sendINFOAndWaitForOK(unsigned info);
+	
+	void sendINFO(const char * measurements);
 
 	void txFrame(unsigned char* frame) { ScopedLock lock(mLock); return mSIP.txFrame(frame); }
 	int rxFrame(unsigned char* frame) { ScopedLock lock(mLock); return mSIP.rxFrame(frame); }
@@ -243,6 +306,63 @@ class TransactionEntry {
 
 	const std::string SIPCallID() const { ScopedLock lock(mLock); return mSIP.callID(); }
 
+	
+	/** acknowledge handover initiation; publish handoverReference + cellId + chanId */
+	SIP::SIPState HOCSendHandoverAck(unsigned handoverReference, unsigned BCC, unsigned NCC, unsigned C0, const char *channelDescription);
+	/** drop handover-originated "call setup" */
+	SIP::SIPState HOCTimeout();
+	/** complete handover-originated "call setup" and provide rtp endpoint*/
+	SIP::SIPState HOCSendOK(short rtpPort, unsigned codec);
+	
+	// Send Handover Command to move the current call
+	void HOSendHandoverCommand(GSM::L3CellDescription wCell, GSM::L3ChannelDescription wChan, unsigned wHandoverReference);
+	
+	bool proxyTransaction() { return mProxyTransaction; }
+	
+	bool handoverTarget(char *cell, char *chan , unsigned *reference) 
+		{ return mSIP.handoverTarget(cell, chan , reference);}
+	bool reinviteTarget(char *ip, char *port, unsigned *codec)
+		{ return mSIP.reinviteTarget(ip, port , codec);}
+	bool reinviteTarget(osip_message_t * msg, char *ip, char *port, unsigned *codec)
+		{ return mSIP.reinviteTarget(msg, ip, port , codec);}
+	
+	void HOProxy_forward_msg(osip_message_t *event);
+	
+	/* re-transmit SIP INFO threw handover chain*/
+	void HOCSendINFO(void *element);
+	
+	// sending BYE directly to BTS, not to proxy;
+	// signs BYE that just flips the loop
+	void HOSendBYE(bool flip_loop);
+	
+	void HOSendBYEOK()
+		{ mSIP.HOSendBYEOK(); }
+	
+	void handoverFailed()
+		{ mHOAllowed = true; }
+	
+	bool handoverAllowed()
+		{ return mHOAllowed; }
+	
+	bool handoverLock();
+	
+	// FIXME: low pass filtering must be implemented
+	vector <int> average(GSM::L3MeasurementResults wMeasurementResults, double wWeights);
+	
+	void resetMeasurement(unsigned index)
+		{ mAveragedMeasurements[index] = MinimalMeasuredValue; }
+	/*
+	// functions to flip handover loops:
+	// set transaction that will replace the current one to continue GSM call
+	void flipHOLoop(TransactionEntry* wAnchorHOTransaction)
+		{ mAnchorHOTransaction = wAnchorHOTransaction; }
+	// check if some transaction must continue GSM call
+	TransactionEntry* flipHOLoop()
+		{ return mAnchorHOTransaction; }
+	// make proxy HO transaction a "normal" one again; SIP loop will be broken outside this function
+	void backToGSMCall(GSM::TCHFACCHLogicalChannel* TCH);
+	*/
+	
 	// These are called by SIPInterface.
 	void saveINVITE(const osip_message_t* invite, bool local)
 		{ ScopedLock lock(mLock); mSIP.saveINVITE(invite,local); }
@@ -360,6 +480,7 @@ class TransactionTable {
 	*/
 	TransactionEntry* find(unsigned wID);
 
+	TransactionEntry* findLegacyTransaction(const GSM::L3MobileIdentity& mobileID);
 	/**
 		Find the longest-running non-SOS call.
 		@return NULL if there are no calls or if all are SOS.

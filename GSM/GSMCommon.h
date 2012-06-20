@@ -72,6 +72,7 @@ enum CallState {
 	HandoverProgress,
 	HandoverOutbound,
 	BusyReject,
+	HOListening,
 };
 
 

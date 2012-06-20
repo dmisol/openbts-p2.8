@@ -84,6 +84,7 @@ Transceiver::Transceiver(int wBasePort,
 
   // initialize filler tables with dummy bursts, initialize other per-timeslot variables
   for (int i = 0; i < 8; i++) {
+	  mHandover[i] = false;
     signalVector* modBurst = modulateBurst(gDummyBurst,*gsmPulse,
 					   8 + (i % 4 == 0),
 					   mSamplesPerSymbol);
@@ -243,6 +244,8 @@ Transceiver::CorrType Transceiver::expectedCorrType(GSM::Time currTime)
   
   unsigned burstTN = currTime.TN();
   unsigned burstFN = currTime.FN();
+
+  if(mHandover[burstTN]) return RACH;
 
   switch (mChanType[burstTN]) {
   case NONE:
@@ -510,6 +513,20 @@ void Transceiver::driveControl()
         mOn = true;
       }
     }
+  }
+  else if  (strcmp(command,"HANDOVER")==0){
+	  int ts;
+	  sscanf(buffer,"%3s %s %d",cmdcheck,command,&ts);
+	  mHandover[ts] = true;
+    LOG(WARNING) << "HANDOVER RACH at timeslot " << ts;
+      sprintf(response,"RSP HANDOVER 0 %d",ts);
+  }
+  else if  (strcmp(command,"NOHANDOVER")==0){
+	  int ts;
+	  sscanf(buffer,"%3s %s %d",cmdcheck,command,&ts);
+	  mHandover[ts] = false;	  
+    LOG(WARNING) << "NOHANDOVER at timeslot " << ts;
+      sprintf(response,"RSP NOHANDOVER 0 %d",ts);
   }
   else if (strcmp(command,"SETMAXDLY")==0) {
     //set expected maximum time-of-arrival

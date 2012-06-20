@@ -1,6 +1,8 @@
 /*
 * Copyright 2009, 2010 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Processing, Inc.
+* Copyright 2012 Jet Wong <icptster@gmail.com>
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -793,6 +795,17 @@ int stats(int argc, char** argv, ostream& os)
 	return SUCCESS;
 }
 
+int handover(int argc, char** argv, ostream& os)
+{
+	if (argc!=2) return BAD_NUM_ARGS;
+
+	GSM::L3MobileIdentity mobileID(argv[1]);
+	string whichBTS = gConfig.getStr("GSM.Handover.Debug.NeighbourIp");
+	
+	gBTS.handover().performHandover(mobileID, whichBTS);
+	
+	return SUCCESS;
+}
 
 //@} // CLI commands
 
@@ -826,6 +839,7 @@ void Parser::addCommands()
 	addCommand("endcall", endcall,"trans# -- terminate the given transaction");
 	addCommand("crashme", crashme, "force crash of OpenBTS for testing purposes");
 	addCommand("stats", stats,"[patt] -- print all, or selected, performance statistics");
+	addCommand("ho", handover,"[IMSI]-- try to perform handover to another timeslot inside the same BTS");
 }
 
 

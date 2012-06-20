@@ -137,6 +137,7 @@ unsigned TransceiverManager::C0() const
 		for (unsigned j=0; j<maxModulus; j++) {
 			mDemuxTable[i][j] = NULL;
 		}
+		handoverStatus[i] = false;
 	}
 }
 
@@ -418,7 +419,43 @@ bool ::ARFCNManager::powerOn(bool warn)
 
 
 
+bool ::ARFCNManager::handoverOff(unsigned ts)
+{
+	if((ts<0) || (ts>8)) return false;
+	int status = sendCommand("NOHANDOVER",ts);
+	if (status!=0) {
+		LOG(ALERT) << "NOHANDOVER failed with status " << status;
+		return false;
+	}
+	handoverStatus[ts] = false;
+	return true;
+}
 
+
+bool ::ARFCNManager::handoverOn(unsigned ts, unsigned hr)
+{
+	if((ts<0) || (ts>8)) return false;
+	int status = sendCommand("HANDOVER",ts);
+	if (status!=0) {
+		LOG(ALERT) << "HANDOVER failed with status " << status;
+		return false;
+	}
+	handoverStatus[ts] = true;
+	handoverReference[ts] = hr;
+	return true;
+}
+
+bool ::ARFCNManager::handover(unsigned ts)
+{
+	if((ts<0) || (ts>8)) return false;
+	return handoverStatus[ts];
+}
+
+unsigned ::ARFCNManager::getHandoverReference(unsigned ts)
+{
+	if((ts<0) || (ts>8)) return 0;
+	return handoverReference[ts];
+}
 
 bool ::ARFCNManager::setPower(int dB)
 {

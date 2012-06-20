@@ -1,5 +1,6 @@
 /*
 * Copyright 2008 Free Software Foundation, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under multiple licenses;
 * see the COPYING file in the main directory for licensing
@@ -167,6 +168,7 @@ public:
 		@return true if the message is a new INVITE
 	*/
 	bool checkInvite( osip_message_t *);
+	bool checkInviteHOC( osip_message_t*);
 
 	/**
 		Send an error response before a transaction is even created.
@@ -187,6 +189,8 @@ public:
 	// then call si.read(call_id)
 
 	void write(const struct sockaddr_in*, osip_message_t*);
+	// this function is desired to send responses, when address is fetched from VIA
+	void write(osip_message_t*);
 
 	osip_message_t* read(const std::string& call_id, unsigned readTimeout, Mutex *lock=NULL)
 		{ return mSIPMap.read(call_id, readTimeout, lock); }

@@ -48,6 +48,7 @@ const char* GSM::CallStateString(GSM::CallState state)
 		case SMSDelivering: return "SMS-delivery";
 		case SMSSubmitting: return "SMS-submission";
 		case BusyReject: return "Busy Reject";
+		case HOListening: return "accepting-handover";
 		default: return NULL;
 	}
 }

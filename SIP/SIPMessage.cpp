@@ -1,5 +1,7 @@
 /*
 * Copyright 2008 Free Software Foundation, Inc.
+* Copyright 2012 Jet Wong <icptster@gmail.com>
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -27,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <time.h>
 
 #include <ortp/ortp.h>
 #include <osipparser2/sdp_message.h>
@@ -582,8 +585,130 @@ osip_message_t * SIP::sip_invite( const char * dialed_number, short rtp_port, co
 	return request;	
 }
 
+osip_message_t * SIP::sip_handover(const char * dialed_number, const char * destBTS,
+	const char * rtp_ip, short rtp_port, const char * sip_username, short wlocal_port,
+	const char * local_ip, const char * proxy_ip,
+	const char * via_branch, const char * call_id, int cseq, unsigned codec) {
 
-// Take the authorization produced by an earlier invite message.
+	char local_port[10];
+	sprintf(local_port, "%i", wlocal_port);
+	
+	LOG(ERR) << "handover dest is " << destBTS << ", asterisk sdp is " << *rtp_ip << ":" << rtp_port;
+	
+	osip_message_t * request;
+	openbts_message_init(&request);
+	// FIXME -- Should use the "force_update" function.
+	request->message_property = 2;
+	request->sip_method = strdup("INVITE");
+	osip_message_set_version(request, strdup("SIP/2.0"));	
+	osip_uri_init(&request->req_uri);
+	osip_uri_set_host(request->req_uri, strdup(destBTS));
+	osip_uri_set_username(request->req_uri, strdup(dialed_number));
+
+	// VIA
+	osip_via_t * via;
+	osip_via_init(&via);
+	via_set_version(via, strdup("2.0"));
+	via_set_protocol(via, strdup("UDP"));
+	via_set_host(via, strdup(local_ip));
+	via_set_port(via, strdup(local_port));
+
+	// VIA BRANCH
+	osip_via_set_branch(via, strdup(via_branch));
+
+	// MAX FORWARDS
+	osip_message_set_max_forwards(request, strdup(gConfig.getStr("SIP.MaxForwards").c_str()));
+
+	// add via
+	osip_list_add(&request->vias, via, -1);
+
+	// FROM
+	osip_from_init(&request->from);
+	osip_from_set_displayname(request->from, strdup(sip_username));
+
+	// FROM TAG
+	osip_from_init(&request->from);
+	osip_from_set_displayname(request->from, strdup(sip_username));
+
+	osip_uri_init(&request->from->url);
+	osip_uri_set_host(request->from->url, strdup(local_ip));
+	osip_uri_set_port(request->from->url, strdup(local_port));
+	osip_uri_set_username(request->from->url, strdup(sip_username));
+
+	// TO
+	osip_to_init(&request->to);
+	osip_to_set_displayname(request->to, strdup(""));
+	osip_uri_init(&request->to->url);
+	osip_uri_set_host(request->to->url, strdup(destBTS));
+	osip_uri_set_username(request->to->url, strdup(dialed_number));
+
+	// If response, we need a to tag.
+	//osip_uri_param_t * to_tag_param;
+	//osip_from_get_tag(rsp->to, &to_tag_param);
+
+	// CALL ID
+	osip_call_id_init(&request->call_id);
+	osip_call_id_set_host(request->call_id, strdup(local_ip));
+	osip_call_id_set_number(request->call_id, strdup(call_id));
+
+	// CSEQ
+	osip_cseq_init(&request->cseq);
+	osip_cseq_set_method(request->cseq, strdup("INVITE"));
+	char temp_buf[14];
+	sprintf(temp_buf,"%i",cseq);
+	osip_cseq_set_number(request->cseq, strdup(temp_buf));	
+
+	// CONTACT
+	osip_contact_t * con;
+	osip_to_init(&con);
+
+	// CONTACT URI
+	osip_uri_init(&con->url);
+	osip_uri_set_host(con->url, strdup(local_ip));
+	osip_uri_set_port(con->url, strdup(local_port));
+	osip_uri_set_username(con->url, strdup(sip_username));
+	osip_contact_param_add(con, strdup("expires"), strdup("3600") );
+
+	// add contact
+	osip_list_add(&request->contacts, con, -1);
+
+	sdp_message_t * sdp;
+	sdp_message_init(&sdp);
+	sdp_message_v_version_set(sdp, strdup("0"));
+	sdp_message_o_origin_set(sdp, strdup(sip_username), strdup("0"),
+		strdup("0"), strdup("IN"), strdup("IP4"), strdup(local_ip));
+
+	sdp_message_s_name_set(sdp, strdup("Talk Time"));
+	sdp_message_t_time_descr_add(sdp, strdup("0"), strdup("0") );
+
+	sprintf(temp_buf,"%i",rtp_port);
+	sdp_message_m_media_add(sdp, strdup("audio"), 
+		strdup(temp_buf), NULL, strdup("RTP/AVP"));
+	sdp_message_c_connection_add
+		(sdp, 0, strdup("IN"), strdup("IP4"), strdup(rtp_ip),NULL, NULL);
+
+	// FIXME -- This should also be inside the switch?
+	sdp_message_m_payload_add(sdp,0,strdup("3"));
+	switch (codec) {
+		case RTPuLaw:
+			sdp_message_a_attribute_add(sdp,0,strdup("rtpmap"),strdup("0 PCMU/8000"));
+			break;
+		case RTPGSM610:
+			sdp_message_a_attribute_add(sdp,0,strdup("rtpmap"),strdup("3 GSM/8000"));
+			break;
+		default: assert(0);
+	};
+	sdp_message_a_attribute_add(sdp,0,strdup("ptime"),strdup("20"));
+	sdp_message_a_attribute_add(sdp,0,strdup("sendrecv"),0);
+
+	char * sdp_str;
+	sdp_message_to_str(sdp, &sdp_str);
+	osip_message_set_body(request, sdp_str, strlen(sdp_str));
+	osip_free(sdp_str);
+	osip_message_set_content_type(request, strdup("application/sdp"));
+
+	return request;	
+}
 
 osip_message_t * SIP::sip_ack(const char * req_uri, const char * dialed_number, const char * sip_username, short wlocal_port, const char * local_ip, const char * proxy_ip, const osip_from_t *from_header, const osip_to_t* to_header, const char * via_branch, const osip_call_id_t* call_id_header, int cseq) {
 
@@ -646,6 +771,67 @@ osip_message_t * SIP::sip_ack(const char * req_uri, const char * dialed_number, 
 	osip_cseq_set_number(ack->cseq, strdup(temp_buf));	
 
 	return ack;
+}
+
+osip_message_t * SIP::sip_temporarily_unavailable( osip_message_t * invite,  const char * host, const char * username, short  port)
+{
+
+	if(invite==NULL){ return NULL;}
+
+	osip_message_t * unavail;
+	openbts_message_init(&unavail);
+	//clone doesn't work -kurtis
+	// FIXME -- Should use the "force_update" function.
+	unavail->message_property = 2;
+	//header stuff first
+	unavail->status_code = 480;
+	unavail->reason_phrase = strdup("Temporarily Unavailable");
+	osip_message_set_version(unavail, strdup("SIP/2.0"));
+
+	char local_port[10];
+	sprintf(local_port, "%i", port);
+	
+	//uri
+	osip_uri_init(&unavail->req_uri);
+	osip_uri_set_host(unavail->req_uri, strdup(host));
+	osip_uri_set_username(unavail->req_uri, strdup(username));
+	osip_uri_set_port(unavail->req_uri, strdup(local_port));
+
+	//via
+	osip_via_t * via;
+	char * via_str;
+	osip_message_get_via(invite, 0, &via);
+	osip_via_to_str(via, &via_str);
+	osip_message_set_via(unavail, via_str);
+	osip_free(via_str);
+
+	// MAX FORWARDS
+	osip_message_set_max_forwards(unavail, strdup(gConfig.getStr("SIP.MaxForwards").c_str()));
+
+	// from/to header
+	osip_from_clone(invite->from, &unavail->from);
+	osip_to_clone(invite->to, &unavail->to);
+
+	//contact
+	osip_contact_t * cont;
+	char * cont_str;
+	osip_message_get_contact(invite, 0, &cont);
+	osip_contact_to_str(cont, &cont_str);
+	osip_message_set_contact(unavail, cont_str);
+	osip_free(cont_str);
+
+	// Get Call-ID.
+	osip_call_id_clone(invite->call_id, &unavail->call_id);
+
+	// Get Cseq.
+	osip_cseq_t * cseq;
+	char * cseq_str;
+	cseq = osip_message_get_cseq(invite);
+	osip_cseq_to_str(cseq ,&cseq_str);
+	osip_message_set_cseq(unavail, cseq_str);	
+	osip_free(cseq_str);
+
+	return unavail;
 }
 
 
@@ -1131,6 +1317,316 @@ osip_message_t * SIP::sip_info(unsigned info, const char *dialed_number, short /
 	return request;	
 }
 
+osip_message_t * SIP::sip_info(const char * measurements, const char *dialed_number, short rtp_port, const char * sip_username, short wlocal_port, const char * local_ip, const char * proxy_ip, const char * from_tag, const char * via_branch, const osip_call_id_t *call_id_header, int cseq) {
 
+	char local_port[10];
+	sprintf(local_port, "%i", wlocal_port);
+
+	osip_message_t * request;
+	osip_message_init(&request);
+	// FIXME -- Should use the "force_update" function.
+	request->message_property = 2;
+	request->sip_method = strdup("INFO");
+	osip_message_set_version(request, strdup("SIP/2.0"));	
+	osip_uri_init(&request->req_uri);
+	osip_uri_set_host(request->req_uri, strdup(proxy_ip));
+	osip_uri_set_username(request->req_uri, strdup(dialed_number));
+	
+	// VIA
+	osip_via_t * via;
+	osip_via_init(&via);
+	via_set_version(via, strdup("2.0"));
+	via_set_protocol(via, strdup("UDP"));
+	via_set_host(via, strdup(local_ip));
+	via_set_port(via, strdup(local_port));
+
+	// VIA BRANCH
+	osip_via_set_branch(via, strdup(via_branch));
+
+	// add via
+	osip_list_add(&request->vias, via, -1);
+
+	// FROM
+	osip_from_init(&request->from);
+	osip_from_set_displayname(request->from, strdup(sip_username));
+
+	// FROM TAG
+	osip_from_set_tag(request->from, strdup(from_tag));
+
+	osip_uri_init(&request->from->url);
+	osip_uri_set_host(request->from->url, strdup(proxy_ip));
+	osip_uri_set_username(request->from->url, strdup(sip_username));
+
+	// TO
+	osip_to_init(&request->to);
+	osip_to_set_displayname(request->to, strdup(""));
+	osip_uri_init(&request->to->url);
+	osip_uri_set_host(request->to->url, strdup(proxy_ip));
+	osip_uri_set_username(request->to->url, strdup(dialed_number));
+
+	// CALL ID
+	osip_call_id_clone(call_id_header, &request->call_id);
+
+	// CSEQ
+	osip_cseq_init(&request->cseq);
+	osip_cseq_set_method(request->cseq, strdup("INFO"));
+	char temp_buf[21];
+	sprintf(temp_buf,"%i",cseq);
+	osip_cseq_set_number(request->cseq, strdup(temp_buf));	
+
+	osip_message_set_content_type(request, strdup("application/measurement-results"));
+	//char message[63];	// GSM 04.08 10.5.2.20: 16 bytes => 32 hex digits
+	//snprintf(message,sizeof(message),"MeasurementResults=%s",measurements);
+
+	//sprintf(temp_buf,"%lu",strlen(message));
+	sprintf(temp_buf,"%lu",strlen(measurements));
+	osip_message_set_content_length(request, strdup(temp_buf));
+
+	// Payload.
+	//osip_message_set_body(request,message,strlen(message));
+        osip_message_set_body(request,measurements,strlen(measurements));
+
+	return request;	
+}
+
+osip_message_t * SIP::sip_info(void * body, const char *dialed_number, short rtp_port, const char * sip_username, short wlocal_port, const char * local_ip, const char * proxy_ip, const char * from_tag, const char * via_branch, const osip_call_id_t *call_id_header, int cseq) {
+
+	char local_port[10];
+	sprintf(local_port, "%i", wlocal_port);
+
+	osip_message_t * request;
+	osip_message_init(&request);
+	// FIXME -- Should use the "force_update" function.
+	request->message_property = 2;
+	request->sip_method = strdup("INFO");
+	osip_message_set_version(request, strdup("SIP/2.0"));	
+	osip_uri_init(&request->req_uri);
+	osip_uri_set_host(request->req_uri, strdup(proxy_ip));
+	osip_uri_set_username(request->req_uri, strdup(dialed_number));
+	
+	// VIA
+	osip_via_t * via;
+	osip_via_init(&via);
+	via_set_version(via, strdup("2.0"));
+	via_set_protocol(via, strdup("UDP"));
+	via_set_host(via, strdup(local_ip));
+	via_set_port(via, strdup(local_port));
+
+	// VIA BRANCH
+	osip_via_set_branch(via, strdup(via_branch));
+
+	// add via
+	osip_list_add(&request->vias, via, -1);
+
+	// FROM
+	osip_from_init(&request->from);
+	osip_from_set_displayname(request->from, strdup(sip_username));
+
+	// FROM TAG
+	osip_from_set_tag(request->from, strdup(from_tag));
+
+	osip_uri_init(&request->from->url);
+	osip_uri_set_host(request->from->url, strdup(proxy_ip));
+	osip_uri_set_username(request->from->url, strdup(sip_username));
+
+	// TO
+	osip_to_init(&request->to);
+	osip_to_set_displayname(request->to, strdup(""));
+	osip_uri_init(&request->to->url);
+	osip_uri_set_host(request->to->url, strdup(proxy_ip));
+	osip_uri_set_username(request->to->url, strdup(dialed_number));
+
+	// CALL ID
+	osip_call_id_clone(call_id_header, &request->call_id);
+
+	// CSEQ
+	osip_cseq_init(&request->cseq);
+	osip_cseq_set_method(request->cseq, strdup("INFO"));
+	char temp_buf[21];
+	sprintf(temp_buf,"%i",cseq);
+	osip_cseq_set_number(request->cseq, strdup(temp_buf));	
+
+	osip_message_set_content_type(request, strdup("application/dtmf-relay"));
+	sprintf(temp_buf,"%d", strlen((char*)body));
+	osip_message_set_content_length(request, strdup(temp_buf));
+
+	// Payload.
+	//osip_message_set_body(request,message,strlen(message));
+        osip_message_set_body(request,(char*)body,strlen((char*)body));
+
+	return request;	
+}
+
+osip_message_t * SIP::sip_proceeding( osip_message_t * invite, const char * sip_username, const char *local_ip, short  port, const char * body) {
+
+	osip_message_t * proceeding;
+	openbts_message_init(&proceeding);
+	// FIXME -- Should use the "force_update" function.
+	proceeding->message_property = 2;
+
+	// Set Header stuff.
+	proceeding->status_code = 183;	
+	proceeding->reason_phrase = strdup("Proceeding");
+	osip_message_set_version(proceeding, strdup("SIP/2.0"));
+	//osip_uri_init(&invite->req_uri);
+
+	// Get Record Route.
+	osip_via_t * via;
+	char * via_str;
+	osip_message_get_via(invite, 0, &via);
+	osip_via_to_str(via, &via_str);
+	osip_message_set_via(proceeding, via_str);	
+	osip_free(via_str);
+	
+	// from/to header
+	osip_from_clone(invite->from, &proceeding->from);
+	osip_to_clone(invite->to, &proceeding->to);
+
+	// Get Call-ID.
+	osip_call_id_clone(invite->call_id, &proceeding->call_id);
+
+	// Get Cseq.
+	osip_cseq_t * cseq;
+	char * cseq_str;
+	cseq = osip_message_get_cseq(invite);
+	osip_cseq_to_str(cseq ,&cseq_str);
+	osip_message_set_cseq(proceeding, cseq_str);	
+	osip_free(cseq_str);
+
+	// CONTACT URI
+	char local_port[10];
+	sprintf(local_port, "%i", port);
+	
+	osip_contact_t * con;
+	osip_to_init(&con);
+	osip_uri_init(&con->url);
+	osip_uri_set_host(con->url, strdup(local_ip));
+	osip_uri_set_username(con->url, strdup(sip_username));
+	osip_uri_set_port(con->url, strdup(local_port));
+	
+	// add contact
+	osip_list_add(&proceeding->contacts, con, -1);
+	
+	// add SIP body
+	if(strlen(body)){
+		char temp_buf[10];
+
+		osip_message_set_content_type(proceeding, strdup("application/handover-target"));
+	
+		sprintf(temp_buf,"%u",strlen(body));
+		osip_message_set_content_length(proceeding, strdup(temp_buf));
+		osip_message_set_body(proceeding,body,strlen(body));
+	}
+	
+	return proceeding;	
+}
+
+osip_message_t * SIP::sip_reinvite(const char * request_uri, const char * dialed_number,
+	const char * sip_username, short wlocal_port, const char * local_ip, 
+	const osip_from_t* from_header, const osip_to_t* to_header, 
+	const char * via_branch, const osip_call_id_t* call_id_header, int cseq,
+	const char * rtp_ip, short rtp_port, unsigned codec){
+
+//	char local_port[10];
+//	sprintf(local_port, "%i", rtp_port);
+	char local_port[10];
+	sprintf(local_port,"%i",wlocal_port);
+	
+	osip_message_t * request;
+	openbts_message_init(&request);
+	// FIXME -- Should use the "force_update" function.
+	request->message_property = 2;
+	request->sip_method = strdup("INVITE");
+	osip_message_set_version(request, strdup("SIP/2.0"));	
+	
+	LOG(ERR) << "handover debug: dialed_number (ea uri_username) is " << dialed_number;
+	osip_uri_init(&request->req_uri);
+	osip_uri_set_host(request->req_uri, strdup(request_uri));
+	osip_uri_set_username(request->req_uri, strdup(dialed_number));
+
+	
+	osip_via_t * via;
+	osip_via_init(&via);
+	via_set_version(via, strdup("2.0"));
+	via_set_protocol(via, strdup("UDP"));
+	via_set_host(via, strdup(local_ip));
+	via_set_port(via, strdup(local_port));
+
+	// via branch + max forwards
+	osip_via_set_branch(via, strdup(via_branch));
+	osip_message_set_max_forwards(request, strdup(gConfig.getStr("SIP.MaxForwards").c_str()));
+
+	// add via
+	osip_list_add(&request->vias, via, -1);
+
+	// from/to header
+	osip_from_clone(from_header, &request->from);
+	osip_to_clone(to_header, &request->to);
+
+	// Call Id Header	
+	osip_call_id_clone(call_id_header, &request->call_id);
+
+	// Cseq Number
+	osip_cseq_init(&request->cseq);
+	osip_cseq_set_method(request->cseq, strdup("INVITE"));
+	char temp_buf[20];
+	sprintf(temp_buf,"%i",cseq);
+	osip_cseq_set_number(request->cseq, strdup(temp_buf));	
+
+	// Contact
+	osip_contact_t * contact;
+	osip_contact_init(&contact);
+	osip_contact_set_displayname(contact, strdup(sip_username) );	
+	osip_uri_init(&contact->url);
+	osip_uri_set_host(contact->url, strdup(local_ip));
+	osip_uri_set_username(contact->url, strdup(sip_username));
+	osip_uri_set_port(contact->url, strdup(local_port));
+
+	// add contact
+	osip_list_add(&request->contacts, contact, -1);
+	
+	sdp_message_t * sdp;
+	sdp_message_init(&sdp);
+	sdp_message_v_version_set(sdp, strdup("0"));
+	sdp_message_o_origin_set(sdp, strdup(sip_username), strdup("0"),
+	strdup("0"), strdup("IN"), strdup("IP4"), strdup(rtp_ip));
+
+	sdp_message_s_name_set(sdp, strdup("Talk Time"));
+	sdp_message_t_time_descr_add(sdp, strdup("0"), strdup("0") );
+
+	sprintf(temp_buf,"%i",rtp_port);
+	sdp_message_m_media_add(sdp, strdup("audio"), 
+		strdup(temp_buf), NULL, strdup("RTP/AVP"));
+	sdp_message_c_connection_add
+	(sdp, 0, strdup("IN"), strdup("IP4"), strdup(rtp_ip),NULL, NULL);
+
+	// FIXME -- This should also be inside the switch?
+	sdp_message_m_payload_add(sdp,0,strdup("3"));
+	switch (codec) {
+		case RTPuLaw:
+			sdp_message_a_attribute_add(sdp,0,strdup("rtpmap"),strdup("0 PCMU/8000"));
+			break;
+		case RTPGSM610:
+			sdp_message_a_attribute_add(sdp,0,strdup("rtpmap"),strdup("3 GSM/8000"));
+			break;
+		default: assert(0);
+	};
+	sdp_message_a_attribute_add(sdp,0,strdup("ptime"),strdup("20"));
+	sdp_message_a_attribute_add(sdp,0,strdup("sendrecv"),0);
+
+	/*
+	 * We construct a sdp_message_t, turn it into a string, and then treat it
+	 * like an osip_body_t.  This works, and perhaps is how it is supposed to
+	 * be done, but in any case we're going to have to do the extra processing
+	 * to turn it into a string first.
+	 */
+	char * sdp_str;
+	sdp_message_to_str(sdp, &sdp_str);
+	osip_message_set_body(request, sdp_str, strlen(sdp_str));
+	osip_free(sdp_str);
+	osip_message_set_content_type(request, strdup("application/sdp"));
+
+	return request;
+}
 
 // vim: ts=4 sw=4

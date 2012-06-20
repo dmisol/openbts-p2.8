@@ -57,6 +57,8 @@ ostream& GSM::operator<<(ostream& os, L3CMServiceType::TypeCode code)
 		case L3CMServiceType::MobileTerminatedCall: os << "MTC"; break;
 		case L3CMServiceType::MobileTerminatedShortMessage: os << "MTSMS"; break;
 		case L3CMServiceType::TestCall: os << "Test"; break;
+		case L3CMServiceType::HandoverOriginatedCall: os << "HO Call"; break;
+		case L3CMServiceType::OutgoingHandover: os << "HO Proc"; break;
 		default: os << "?" << (int)code << "?";
 	}
 	return os;

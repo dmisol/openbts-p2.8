@@ -2,7 +2,8 @@
 /*
 * Copyright 2008, 2009 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Processing, Inc.
-*
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
+* 
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
 *
@@ -816,6 +817,49 @@ class L3SI3RestOctets : public L3RestOctets {
 	void parseV( const L3Frame&, size_t&, size_t) { abort(); }
 	void parseV(const L3Frame&, size_t&) { abort(); }
 	void text(std::ostream& os) const;
+
+};
+
+
+/* GSM 10.5.2.2 */
+class L3CellDescription : public L3ProtocolElement
+{
+	unsigned mBCC;
+	unsigned mNCC;
+	unsigned mARFCN;
+
+public:
+
+	// for HO CMD to the same site
+	L3CellDescription();
+	
+	L3CellDescription(unsigned wBCC, unsigned wNCC, unsigned wARFCN)
+		:L3ProtocolElement(),mBCC(wBCC),mNCC(wNCC),mARFCN(wARFCN)
+	{ }
+
+	size_t lengthV() const { return 2; }
+	void writeV( L3Frame &dest, size_t &wp ) const;
+	void parseV( const L3Frame&, size_t&) { assert(0); }
+	void parseV(const L3Frame&, size_t& , size_t) { assert(0); }
+	void text(std::ostream&) const;
+};
+
+/* GSM 04.08 10.5.2.15 */
+class L3HandoverReference : public L3ProtocolElement
+{
+	unsigned mValue;
+
+public:
+
+	L3HandoverReference(unsigned handoverReference)
+		:L3ProtocolElement(),mValue(handoverReference)
+	{ }
+
+	size_t lengthV() const { return 1; }
+	void writeV( L3Frame &dest, size_t &wp ) const;
+	void parseV( const L3Frame&, size_t&);
+	void parseV(const L3Frame&, size_t& , size_t) { assert(0); }
+	void text(std::ostream&) const;
 
 };
 

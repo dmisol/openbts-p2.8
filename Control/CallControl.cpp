@@ -3,6 +3,8 @@
 * Copyright 2008, 2009, 2010 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Processing, Inc.
 * Copyright 2011 Range Networks, Inc.
+* Copyright 2012 Jet Wong <icptster@gmail.com>
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -57,11 +59,16 @@
 #include <SIPEngine.h>
 
 #include <Logger.h>
+
 #include <Reporting.h>
+
+#include <osipparser2/osip_message.h>
+
 #undef WARNING
 
 using namespace std;
 using namespace Control;
+using namespace GSM;
 
 
 
@@ -135,6 +142,7 @@ void forceSIPClearing(TransactionEntry *transaction)
 	if (transaction->SIPFinished()) return;
 	if (state==SIP::Active){
 		//Changes state to clearing
+		LOG(ERR) << "handover debug; BYE from forceSIPClearing()";
 		transaction->MODSendBYE();
 		//then cleared
 		transaction->MODWaitForBYEOK();
@@ -282,6 +290,7 @@ bool assignTCHF(TransactionEntry *transaction, GSM::LogicalChannel *DCCH, GSM::T
 	transaction->channel(NULL);
 	
 	// Shut down the SIP side of the call.
+	LOG(ERR) << "handover debug; forceSIPClearing() from aassignTCHF()";		
 	forceSIPClearing(transaction);
 	// Indicate failure.
 	return false;
@@ -377,6 +386,7 @@ bool callManagementDispatchGSM(TransactionEntry *transaction, GSM::LogicalChanne
 		transaction->GSMState(GSM::ReleaseRequest);
 		//bug #172 fixed
 		if (transaction->SIPState()==SIP::Active){
+			LOG(ERR) << "handover debug; BYE from ..DispatchGSM()";
 			transaction->MODSendBYE();
 			transaction->MODWaitForBYEOK();
 		}
@@ -441,6 +451,7 @@ bool callManagementDispatchGSM(TransactionEntry *transaction, GSM::LogicalChanne
 		// The IMSI detach procedure will release the LCH.
 		LOG(INFO) << "GSM IMSI Detach " << *transaction;
 		IMSIDetachController(detach,LCH);
+		LOG(ERR) << "handover debug; forceSIPClearing() from dispatchGSM() - phone off";		
 		forceSIPClearing(transaction);
 		return true;
 	}
@@ -599,6 +610,7 @@ bool updateGSMSignalling(TransactionEntry *transaction, GSM::LogicalChannel *LCH
 
 	// Any Q.931 timer expired?
 	if (transaction->anyTimerExpired()) {
+		LOG(ERR) << "handover debug transaction->anyTimerExpired()";
 		// Cause 0x66, "recover on timer expiry"
 		abortCall(transaction,LCH,GSM::L3Cause(0x66));
 		return true;
@@ -689,6 +701,12 @@ bool updateSignalling(TransactionEntry *transaction, GSM::LogicalChannel *LCH, u
 */
 bool pollInCall(TransactionEntry *transaction, GSM::TCHFACCHLogicalChannel *TCH)
 {
+	if(transaction->proxyTransaction()){
+		transaction->channel(NULL);
+		LOG(ERR) << "since this moment a transaction is acting as SIP proxy due to handover";
+		return true;
+	}
+
 	// See if the radio link disappeared.
 	if (TCH->radioFailure()) {
 		LOG(NOTICE) << "radio link failure, dropped call";
@@ -698,10 +716,13 @@ bool pollInCall(TransactionEntry *transaction, GSM::TCHFACCHLogicalChannel *TCH)
 
 	// Process pending SIP and GSM signalling.
 	// If this returns true, it means the call is fully cleared.
-	if (updateSignalling(transaction,TCH)) return true;
+	if (updateSignalling(transaction,TCH)) {
+		return true;
+	}
 
 	// Did an outside process request a termination?
 	if (transaction->terminationRequested()) {
+		LOG(ERR) << "handover debug transaction->terminationRequested()";
 		// Cause 25 is "pre-emptive clearing".
 		abortCall(transaction,TCH,25);
 		// Do the hard release to short-cut the timers.
@@ -772,7 +793,7 @@ void callManagementLoop(TransactionEntry *transaction, GSM::TCHFACCHLogicalChann
 			gReports.incr("OpenBTS.GSM.CC.CallMinutes");
 		}
 	}
-	gTransactionTable.remove(transaction);
+	if (!transaction->proxyTransaction()) gTransactionTable.remove(transaction);
 }
 
 
@@ -1095,8 +1116,6 @@ void Control::MOCController(TransactionEntry *transaction, GSM::TCHFACCHLogicalC
 }
 
 
-
-
 void Control::MTCStarter(TransactionEntry *transaction, GSM::LogicalChannel *LCH)
 {
 	assert(LCH);
@@ -1300,5 +1319,97 @@ void Control::initiateMTTransaction(TransactionEntry *transaction, GSM::ChannelT
 
 
 
+/* The reason to keep different functions for proxy SM is
+ *  to implement (later on) logic of flipping loops */
+bool Control::HOProxyDownlinkSM(
+	osip_message_t *event, TransactionEntry *msc, TransactionEntry *tail){
+
+	assert(event);
+	if(MSG_IS_RESPONSE(event)) {
+		LOG(ERR) << "handover proxy downlink: resp " << event->status_code << "(" << event->cseq->method << ")";
+		if(event->status_code == 200){
+			if(strstr(event->cseq->method,"INVITE")){
+			// .. in response to re-invite, send ack
+			// FIXME ? need special function - not to change mSIP status
+				msc->MOCSendACK();
+				osip_message_free(event);
+				return false;
+			}
+			if(strstr(event->cseq->method,"BYE")){
+			// .. BYE is acknowledged
+				osip_message_free(event);
+				return false;
+			}
+			osip_message_free(event);
+			return false;
+
+		}
+		else if(event->status_code < 200){
+		LOG(ERR) << "  handover proxy downlink: ignoring" << event->status_code << "(" << event->cseq->method << ")";
+			
+				osip_message_free(event);
+				return false;
+		}
+		LOG(ERR) << "  handover proxy downlink: unexpected response" << event->status_code << "(" << event->cseq->method << ")";
+		osip_message_free(event);
+		return false;
+	}
+	
+	if(MSG_IS_BYE(event)){
+		LOG(ERR) << "handover proxy downlink: got BYE, relaying";
+		
+		tail->HOSendBYE(false);
+		osip_message_free(event);
+		return true;
+	}
+	
+	LOG(ERR) << "handover proxy downlink: need to relay " << event->sip_method;
+	tail->HOProxy_forward_msg(event);
+					
+	return false;
+}
+
+bool Control::HOProxyUplinkSM(
+	osip_message_t *event, TransactionEntry *tail, TransactionEntry *msc){
+	
+	assert(event);
+	if(MSG_IS_RESPONSE(event)) {
+		LOG(ERR) << "handover proxy uplink: resp " << event->status_code << "(" << event->cseq->method << ")";
+		if(event->status_code == 200){
+			if(strstr(event->cseq->method,"BYE")){
+			// .. BYE is acknowledged
+			osip_message_free(event);	
+			return false;
+			}
+		}
+		LOG(ERR) << "  handover proxy uplink: unexpected response" 
+			<< event->status_code << "(" << event->cseq->method << ")";
+		osip_message_free(event);
+		return false;
+	}
+	
+	if(MSG_IS_BYE(event)){
+		LOG(ERR) << "handover proxy: relaying BYE ";
+		
+		msc->MODSendBYE();
+		osip_message_free(event);
+		return true;
+	}
+	
+	if(MSG_IS_INFO(event)){
+		// dtmf to MSC
+		// need to ACK it with 200 and send further
+		// FIXME: I'm not waiting for 200 any more
+		tail->HOSendOK(event);
+		LOG(ERR) << "handover-proxy relaying DTMF" << event->bodies.node->element;
+		msc->HOCSendINFO(event->bodies.node->element);
+		osip_message_free(event);
+	}
+	
+	LOG(ERR) << "handover proxy uolink: need to relay " << event->sip_method;
+	msc->HOProxy_forward_msg(event);
+					
+	return false;
+}
 
 // vim: ts=4 sw=4

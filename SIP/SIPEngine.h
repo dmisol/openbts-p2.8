@@ -2,6 +2,7 @@
 * Copyright 2008 Free Software Foundation, Inc.
 * Copyright 2010 Kestrel Signal Processing, Inc.
 * Copyright 2011 Range Networks, Inc.
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -63,7 +64,11 @@ enum SIPState  {
 	Canceled,
 	Cleared,
 	Fail,
-	MessageSubmit
+	MessageSubmit,
+			//HO state
+	HO_Invited,
+	HO_Command,
+	HO_Proxy
 };
 
 
@@ -105,6 +110,10 @@ private:
 	std::string mProxyIP;			///< IP address of the SIP proxy
 	unsigned mProxyPort;			///< UDP port number of the SIP proxy
 	struct ::sockaddr_in mProxyAddr;	///< the ready-to-use UDP address
+	
+	// FIXME are there any reasons to keep both addresses? dmisol
+	struct ::sockaddr_in mHOtoBTSAddr;	///< target iBTS address
+
 	//@}
 
 	/**@name Saved SIP messages. */
@@ -120,6 +129,8 @@ private:
 	/**@name RTP state and parameters. */
 	//@{
 	short mRTPPort;
+	short mDRTPPort;
+	char mDRTPIp[20];		// destination ip (rtp)
 	unsigned mCodec;
 	RtpSession * mSession;		///< RTP media session
 	unsigned int mTxTime;		///< RTP transmission timestamp in 8 kHz samples
@@ -147,6 +158,9 @@ public:
 	/** Destroy held message copies. */
 	~SIPEngine();
 
+	osip_message_t* get_message();
+	osip_message_t* HOGetResp();
+	
 	const std::string& callID() const { return mCallID; } 
 
 	const std::string& proxyIP() const { return mProxyIP; }
@@ -157,6 +171,9 @@ public:
 
 	/** Return the RTP Port being used. */
 	short RTPPort() const { return mRTPPort; }
+	short destRTPPort() const { return mDRTPPort; }
+	char* destRTPIp() { return mDRTPIp; }
+	unsigned codec() const { return mCodec; }
 
 	/** Return if the call has successfully finished */
 	bool finished() const { return (mState==Cleared || mState==Canceled || mState==Fail); }
@@ -171,6 +188,14 @@ public:
 	/** Set the use to IMSI<IMSI> and set the other SIP call parameters; for network-originated transactions. */
 	void user( const char * wCallID, const char * IMSI , const char *origID, const char *origHost);
 
+	/** Set generate call ID for outgoing handover */
+	SIPEngine(const char* proxy, const char* IMSI, unsigned wL3TI, string wDRTPIp, short wDestRTP, unsigned wCodec);
+	
+	/** fetch parameters for Handover Command */
+	bool handoverTarget(char *cell, char *chan , unsigned *reference);
+	/** fetch parameters for re-invite during handover */
+	bool reinviteTarget(char *ip, char *port, unsigned *codec);
+	bool reinviteTarget(osip_message_t * msg, char *ip, char *port, unsigned *codec);
 	/**@name Messages for SIP registration. */
 	//@{
 
@@ -277,7 +302,7 @@ public:
 	SIPState MTCSendOK();
 
 	//@}
-
+	
 
 
 	/**@name Messages for MOD procedure. */
@@ -315,7 +340,26 @@ public:
 
 	SIPState MTDSendCANCELOK();
 	//@}
-
+	
+	
+	SIPState HOSendINVITE(string whichBTS);
+	
+	SIPState HOSendACK();
+	
+	SIPState HOSendREINVITE(bool toHost, char *ip, short port, unsigned codec);
+	
+	SIPState HOSendBYEOK();
+	
+	SIPState HOSendBYE();
+	
+	void HOSendOK(osip_message_t * msg);
+	
+	// sip body must contain target cell parameters for handover
+	SIPState HOCSendProceeding(const char *body);
+	
+	SIPState HOCSendOK(short rtpPort, unsigned codec);
+	
+	SIPState HOCSendTemporarilyUnavailable();
 
 	/** Set up to start sending RFC2833 DTMF event frames in the RTP stream. */
 	bool startDTMF(char key);
@@ -349,7 +393,14 @@ public:
 	bool sendINFOAndWaitForOK(unsigned wInfo, Mutex *lock=NULL);
 
 	//@}
+        
+        /**
+		A way to deliver Measurement Results  04.08 10.5.2.20
+	*/
+	void sendINFO(const char * wInfo);
 
+	/* pass DTMF (SIP INFO) threw handover chain*/
+	void sendINFO(void* wInfo);
 
 	/** Save a copy of an INVITE or MESSAGE message in the engine. */
 	void saveINVITE(const osip_message_t *INVITE, bool mine);
@@ -372,6 +423,9 @@ public:
 
 	private:
 
+	SIPState SendBYE(struct ::sockaddr_in *addr);
+	
+	SIPState SendBYEOK(struct ::sockaddr_in *addr);
 	/**
 		Initialize the RTP session.
 		@param msg A SIP INVITE or 200 OK wth RTP parameters

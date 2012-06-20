@@ -124,6 +124,7 @@ private:
 
   bool mOn;			       ///< flag to indicate that transceiver is powered on
   ChannelCombination mChanType[8];     ///< channel types for all timeslots
+  bool mHandover[8];	///< expect handover to the timeslot
   double mTxFreq;                      ///< the transmit frequency
   double mRxFreq;                      ///< the receive frequency
   int mPower;                          ///< the transmit power in dB

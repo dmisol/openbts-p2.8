@@ -139,6 +139,8 @@ class ARFCNManager {
 
 	unsigned mARFCN;						///< the current ARFCN
 
+	bool handoverStatus[8];
+	unsigned handoverReference[8];
 
 	public:
 
@@ -178,6 +180,16 @@ class ARFCNManager {
 	*/
 	bool powerOn(bool warn);
 
+	/** Turn on RACH for handover */
+	bool handoverOn(unsigned ts, unsigned handoverReference);
+	
+	/** Turn off RACH for handover */
+	bool handoverOff(unsigned ts);
+	
+	/** Check if handover is expected */
+	bool handover(unsigned ts);
+	
+	unsigned getHandoverReference(unsigned ts);
         /**     
 		Set maximum expected delay spread.
 		@param km Max network range in kilometers.

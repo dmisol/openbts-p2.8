@@ -1,5 +1,7 @@
 /*
 * Copyright 2008 Free Software Foundation, Inc.
+* Copyright 2012 Jet Wong <icptster@gmail.com>
+* Copyright 2012 Fairwaves LLC, Dmitri Soloviev <dmi3sol@gmail.com>
 *
 * This software is distributed under the terms of the GNU Affero Public License.
 * See the COPYING file in the main directory for details.
@@ -55,15 +57,31 @@ osip_message_t * sip_okay_sdp( osip_message_t * inv, const char * sip_username, 
 
 osip_message_t * sip_okay( osip_message_t * inv, const char * sip_username, const char * local_ip, short wlocal_port);
 
+osip_message_t * sip_temporarily_unavailable( osip_message_t * invite,  const char * host, const char * username, short  port);
+
 osip_message_t * sip_error( osip_message_t * invite,  const char * host, const char * username, short port, short code, const char* reason);
 
 osip_message_t * sip_info(unsigned info, const char *dialed_number, short rtp_port,const char * sip_username, short local_port, const char * local_ip, const char * proxy_ip, const char * from_tag, const char * via_branch, const osip_call_id_t* call_id_header, int cseq);
+
+osip_message_t * sip_info(const char * measurements, const char *dialed_number, short rtp_port,const char * sip_username, short local_port, const char * local_ip, const char * proxy_ip, const char * from_tag, const char * via_branch, const osip_call_id_t* call_id_header, int cseq);
+
+osip_message_t * sip_info(void * body, const char *dialed_number, short rtp_port,const char * sip_username, short local_port, const char * local_ip, const char * proxy_ip, const char * from_tag, const char * via_branch, const osip_call_id_t* call_id_header, int cseq);
 
 osip_message_t * sip_b_okay( osip_message_t * bye  );
 
 osip_message_t * sip_trying( osip_message_t * invite, const char * sip_username, const char * local_ip);
 
 osip_message_t * sip_ringing( osip_message_t * invite, const char * sip_username, const char * local_ip);
+
+osip_message_t * sip_handover( const char * dialed_number, const char * destBTS, const char * rtp_ip, short rtp_port, const char * sip_username, short wlocal_port, const char * local_ip, const char * proxy_ip, const char * via_branch, const char * call_id, int cseq, unsigned codec) ;
+
+osip_message_t * sip_reinvite(const char * request_uri, const char * dialed_number,
+	const char * sip_username, short wlocal_port, const char * local_ip, 
+	const osip_from_t* from_header, const osip_to_t* to_header, 
+	const char * via_branch, const osip_call_id_t* call_id_header, int cseq,
+	const char * rtp_ip, short rtp_port, unsigned codec);
+
+osip_message_t * sip_proceeding( osip_message_t * invite, const char * sip_username, const char *local_ip, short  port, const char * body);
 
 
 

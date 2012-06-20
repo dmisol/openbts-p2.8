@@ -37,7 +37,11 @@ namespace Control {
 
 class TransactionEntry;
 
-
+/**@name HOC */
+//@{
+/** call that appeared due to Handover */
+void HOCController(GSM::LogicalChannel*);
+//@}
 
 /**@name MOC */
 //@{
@@ -58,6 +62,21 @@ void MTCStarter(TransactionEntry*, GSM::LogicalChannel*);
 void MTCController(TransactionEntry*, GSM::TCHFACCHLogicalChannel*);
 //@}
 
+// by Jet, activities at the "old" site
+void HOController(TransactionEntry *transaction);
+
+/** State machine for (outgoing) handover attempt;
+ *  returns true if still needed */
+bool HOAttemptSM(osip_message_t *event, TransactionEntry *transaction);
+
+/** State machines for handover proxy;
+ *  returns true if still needed 
+ *  Downlink - from switch to handover chain 
+ *  Uplink - from chain towards switch */
+bool HOProxyDownlinkSM(
+	osip_message_t *event, TransactionEntry *scr_msc, TransactionEntry *dst_tail);
+bool HOProxyUplinkSM(
+	osip_message_t *event, TransactionEntry *src_tail, TransactionEntry *dst_msc);
 
 /**@name Test Call */
 //@{
