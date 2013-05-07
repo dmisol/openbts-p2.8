@@ -1110,15 +1110,11 @@ bool TCHFACCHL1Decoder::processBurst( const RxBurst& inBurst)
 				cout << "valid handover access detected, reference=" << HR << endl;
 				
 				gBTS.handover().handoverAccess(TN(),initialTA);
-				//Control::HandoverEntry *he = gBTS.handover().find_handover(TN());
-				//if(he) he->HandoverAccessDetected(initialTA);
-				//else OBJLOG(ERR) << "unable to find handover entry @" << TN();
 			}
 			else OBJLOG(ALERT) <<"Wrong handover Reference " << HR << "\n";
 		return false;}
 	}
-//	else OBJLOG(ERR) << "Normal burst!!!";
-	
+
 	// The reverse index runs 0..7 as the bursts arrive.
 	// It is the "B" index of GSM 05.03 3.1.3 and 3.1.4.
 	int B = mMapping.reverseMapping(inBurst.time().FN()) % 8;

@@ -592,9 +592,7 @@ osip_message_t * SIP::sip_handover(const char * dialed_number, const char * dest
 
 	char local_port[10];
 	sprintf(local_port, "%i", wlocal_port);
-	
-	LOG(ERR) << "handover dest is " << destBTS << ", asterisk sdp is " << *rtp_ip << ":" << rtp_port;
-	
+		
 	osip_message_t * request;
 	openbts_message_init(&request);
 	// FIXME -- Should use the "force_update" function.
@@ -1527,8 +1525,6 @@ osip_message_t * SIP::sip_reinvite(const char * request_uri, const char * dialed
 	const char * via_branch, const osip_call_id_t* call_id_header, int cseq,
 	const char * rtp_ip, short rtp_port, unsigned codec){
 
-//	char local_port[10];
-//	sprintf(local_port, "%i", rtp_port);
 	char local_port[10];
 	sprintf(local_port,"%i",wlocal_port);
 	
@@ -1539,7 +1535,6 @@ osip_message_t * SIP::sip_reinvite(const char * request_uri, const char * dialed
 	request->sip_method = strdup("INVITE");
 	osip_message_set_version(request, strdup("SIP/2.0"));	
 	
-	LOG(ERR) << "handover debug: dialed_number (ea uri_username) is " << dialed_number;
 	osip_uri_init(&request->req_uri);
 	osip_uri_set_host(request->req_uri, strdup(request_uri));
 	osip_uri_set_username(request->req_uri, strdup(dialed_number));

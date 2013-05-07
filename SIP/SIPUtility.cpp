@@ -83,7 +83,6 @@ bool SIP::get_rtp_params(const osip_message_t * msg, char * port, char * ip_addr
 	char buf[100];
 	sscanf(p+6,"%s",buf);
 		
-	//LOG(ERR) << "ip " << sdp->c_connection->c_addr;
 	strcpy(port,sdp_message_m_port_get(sdp,0));
 	strcpy(ip_addr, buf);
 	return true;
@@ -100,17 +99,14 @@ bool SIP::get_handover_params(const osip_message_t * msg, char * cell, char * ch
 	p = strstr(ho_str,"cell:");
 	if(!p) return false;
 	strcpy(cell, p+strlen("cell:"));
-	LOG(ERR) << "handover cell= " << cell;
 	
 	p = strstr(ho_str,"chan:");
 	if(!p) return false;
 	strcpy(chan, p+strlen("chan:"));
-	LOG(ERR) << "handover chan= " << chan;
 
 	p = strstr(ho_str,"reference:");
 	if(!p) return false;
 	sscanf(p+strlen("reference:"),"%u",reference);
-	LOG(ERR) << "handover ref= " << reference;
 	return true;
 }
 
