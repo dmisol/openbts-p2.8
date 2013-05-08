@@ -203,9 +203,6 @@ class TransactionEntry {
 	GSM::CallState GSMState() const;
 	void GSMState(GSM::CallState wState);
 
-	//const HandoverEntry * handoverEntry() const { return mHandoverEntry; }
-//	HandoverEntry * handoverEntry() { return mHandoverEntry; }
-	
 	// needed to create a temporary transaction for outgoing handover
 	short destRTPPort() const { return mSIP.destRTPPort(); }
 	char* destRTPIp() { return mSIP.destRTPIp(); }
@@ -351,17 +348,6 @@ class TransactionEntry {
 	
 	void resetMeasurement(unsigned index)
 		{ mAveragedMeasurements[index] = MinimalMeasuredValue; }
-	/*
-	// functions to flip handover loops:
-	// set transaction that will replace the current one to continue GSM call
-	void flipHOLoop(TransactionEntry* wAnchorHOTransaction)
-		{ mAnchorHOTransaction = wAnchorHOTransaction; }
-	// check if some transaction must continue GSM call
-	TransactionEntry* flipHOLoop()
-		{ return mAnchorHOTransaction; }
-	// make proxy HO transaction a "normal" one again; SIP loop will be broken outside this function
-	void backToGSMCall(GSM::TCHFACCHLogicalChannel* TCH);
-	*/
 	
 	// These are called by SIPInterface.
 	void saveINVITE(const osip_message_t* invite, bool local)

@@ -702,9 +702,6 @@ SIPState  SIPEngine::MOCCheckForOK(Mutex *lock)
 
 SIPState SIPEngine::MOCSendACK()
 {
-//	since handover is supported, 200Ok may apper as a response to re-invite
-//	assert(mLastResponse);
-
 	LOG(INFO) << "user " << mSIPUsername << " state " << mState;
 
 	osip_message_t* ack = sip_ack( mRemoteDomain.c_str(),
@@ -991,7 +988,6 @@ SIPEngine::SIPEngine(const char* proxy, const char* IMSI, unsigned wL3TI, string
 	mSIPUsername = string("IMSI") + IMSI;
 	char tmp[200];
 	sprintf(tmp, "handover-%u-%s-%lX", wL3TI, mSIPUsername.c_str(), time(0));
-	LOG(ERR) << "creating SIP engine for outgoing handover transaction, callID " << tmp;
 	
 	mCallID = tmp;
 
@@ -1033,10 +1029,6 @@ SIPState SIPEngine::HOSendINVITE(string whichBTS)
 	
 	mRemoteDomain = whichBTS.c_str();
 	mRemoteUsername =mSIPUsername;
-	
-	LOG(ERR) << "mRemoteUsername=" << mRemoteUsername;
-	LOG(ERR) << "mSIPUsername=" << mSIPUsername;
-	LOG(ERR) << "handover target BTS is " << whichBTS.c_str();
 
 	osip_message_t * invite = sip_handover(
 		mSIPUsername.c_str(), whichBTS.c_str(),
@@ -1044,8 +1036,6 @@ SIPState SIPEngine::HOSendINVITE(string whichBTS)
 		mSIPPort, mSIPIP.c_str(), mProxyIP.c_str(), 
 		mViaBranch.c_str(), mCallID.c_str(), mCSeq, mCodec); 
 
-	LOG(ERR) << "handover Invite has callID=" << invite->call_id->number;
-	
 	// Send Invite.
 
 	if (! resolveAddress(&mHOtoBTSAddr, whichBTS.c_str())) {
@@ -1149,7 +1139,6 @@ SIPState SIPEngine::MODWaitForERRORACK(bool cancel, Mutex *lock)
 	return mState;
 }
 
-SIPState SIPEngine::HOSendREINVITE(bool toHost, char *ip, short port, unsigned codec)
 {
 	LOG(INFO) << "user " << mSIPUsername << " state " << mState;
 	
@@ -1159,9 +1148,6 @@ SIPState SIPEngine::HOSendREINVITE(bool toHost, char *ip, short port, unsigned c
 	make_branch(tmp);
 	mViaBranch = tmp;
 	mCSeq++;
-	
-	LOG(ERR) << "handover debug: reinvite mRemoteUsername " << mRemoteUsername;
-	LOG(ERR) << "handover debug: reinvite mRemoteUsername.c_str() " << mRemoteUsername.c_str();
 	
 	osip_message_t * invite;
 	if(toHost)
@@ -1178,7 +1164,6 @@ SIPState SIPEngine::HOSendREINVITE(bool toHost, char *ip, short port, unsigned c
 		ip, port, codec);
 	    
 	
-	LOG(ERR) << "sending handover re-invite";
 /*
 	if(toHost) gSIPInterface.write(&mProxyAddr,invite);
 	else gSIPInterface.write(&mHOtoBTSAddr,invite);
@@ -1213,7 +1198,6 @@ SIPState SIPEngine::HOCSendTemporarilyUnavailable()
 		LOG(ERR) << "handover, mINVITE is NULL";
 	}
 	if (mState==Fail) return mState;
-	LOG(ERR) << "handover, sending SIP 480 unavailable";
 	
 	osip_message_t * unavail = sip_temporarily_unavailable(mINVITE, mProxyIP.c_str(), mSIPUsername.c_str(), mSIPPort);;
 	// get ip:port from VIA, as we have to respond directly
@@ -1225,7 +1209,7 @@ SIPState SIPEngine::HOCSendTemporarilyUnavailable()
 
 SIPState SIPEngine::HOCSendOK( short wRTPPort, unsigned wCodec )
 {
-	LOG(ERR) << "200 OK handover " << mSIPUsername;
+	LOG(DEBUG) << "200 OK handover " << mSIPUsername;
 	assert(mINVITE);
 	mRTPPort = wRTPPort;
 	mCodec = wCodec;
@@ -1241,7 +1225,7 @@ SIPState SIPEngine::HOCSendOK( short wRTPPort, unsigned wCodec )
 
 void SIPEngine::HOSendOK(osip_message_t * msg)
 {
-	LOG(ERR) << "200 OK handover re-invite" << mSIPUsername;
+	LOG(DEBUG) << "200 OK handover re-invite" << mSIPUsername;
 	assert(msg);
 	osip_message_t * okay = sip_okay(msg, mSIPUsername.c_str(),
 		mSIPIP.c_str(), mSIPPort);
@@ -1548,8 +1532,6 @@ void SIPEngine::InitRTP(const osip_message_t * msg )
 	rtp_session_set_local_addr(mSession, "0.0.0.0", mRTPPort );
 	rtp_session_set_remote_addr(mSession, mDRTPIp/*d_ip_addr*/, atoi(d_port));
 	
-	LOG(ERR) << "handover debug, RTP local " << mRTPPort << ", remote " << mDRTPIp/*d_ip_addr*/ << ":" << d_port;
-
 	// Check for event support.
 	int code = rtp_session_telephone_events_supported(mSession);
 	if (code == -1) {

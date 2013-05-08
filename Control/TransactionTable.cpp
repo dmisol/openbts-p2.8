@@ -627,9 +627,9 @@ SIP::SIPState TransactionEntry::HOSendACK()
 SIP::SIPState TransactionEntry::HOSendINVITE(string whichBTS)
 {
 	ScopedLock lock(mLock);
-	LOG(WARNING) << "sending handover invite, BTS: " << whichBTS
+	LOG(DEBUG) << "sending handover invite, BTS: " << whichBTS
 		<< ", L3TI: " << mL3TI;
-	LOG(WARNING) << "handover call ID is now " << mSIP.callID();
+	LOG(DEBUG) << "handover call ID is now " << mSIP.callID();
 	SIP::SIPState state = mSIP.HOSendINVITE(whichBTS);
 	echoSIPState(state);
 	return state;
@@ -641,12 +641,12 @@ SIP::SIPState TransactionEntry::HOSendREINVITE(char *ip, short port, unsigned co
 	if(!mProxyTransaction)	mProxyTransaction = true;
 	SIP::SIPState state;
 	if(mService == L3CMServiceType::HandoverOriginatedCall){
-		LOG(ERR) << "the sequence of handovers, can't re-invite host directly";
+		LOG(DEBUG) << "the sequence of handovers, can't re-invite host directly";
 		state = mSIP.HOSendREINVITE(false, ip, port, codec);
 		//state = mSIP.HOSendREINVITE(true, ip, port, codec);
 	}
 	else {
-		LOG(ERR) << "the fist handover, re-invite host directly";
+		LOG(DEBUG) << "the fist handover, re-invite host directly";
 		state = mSIP.HOSendREINVITE(true, ip, port, codec);
 	}
 	echoSIPState(state);
@@ -994,7 +994,7 @@ SIP::SIPState TransactionEntry::HOCSendHandoverAck(unsigned wHandoverReference,
 		unsigned wBCC, unsigned wNCC, unsigned wC0,
 		const char *channelDescription){
 
-	LOG(ERR) << "handover: SIP 183, proceeding" << 
+	LOG(DEBUG) << "handover: SIP 183, proceeding" << 
 		"\n\t Handover:" << wHandoverReference <<
 		"\n\t Cell:" << 
 		" BCC= " << wBCC << 
@@ -1017,7 +1017,7 @@ SIP::SIPState TransactionEntry::HOCSendHandoverAck(unsigned wHandoverReference,
 
 
 SIP::SIPState TransactionEntry::HOCSendOK(short rtpPort, unsigned codec){
-	LOG(ERR) << "sending 200 OK (handover completed), port=" << rtpPort << ", codec=" << codec;
+	LOG(DEBUG) << "sending 200 OK (handover completed), port=" << rtpPort << ", codec=" << codec;
 	ScopedLock lock(mLock);
 	SIP::SIPState state = mSIP.HOCSendOK(rtpPort,codec);
 	echoSIPState(state);
@@ -1028,9 +1028,7 @@ osip_message_t * TransactionEntry::HOGetSIPMessage(){
 	osip_message_t *msg;
 	msg = mSIP.get_message();
 	if(msg != NULL) {
-		LOG(ERR) << "SIP for outgo handover";
 		if(msg->status_code) {
-			LOG(ERR) << "saving resp for outgo handover";
 			mSIP.saveResponse(msg);
 		}
 	}	
@@ -1042,10 +1040,8 @@ int TransactionEntry::HOGetSIPResponse(){
 	osip_message_t *msg; 
 	msg = mSIP.HOGetResp();
 	if(msg != NULL) {
-		LOG(ERR) << "SIP for outgo handover " << msg->status_code;
 		if(msg->status_code) {
 			mSIP.saveResponse(msg);
-			LOG(ERR) << "handover, SIP msg saved " << msg->status_code;
 			int code = msg->status_code;
 			osip_message_free(msg);
 			return code;
@@ -1057,7 +1053,7 @@ int TransactionEntry::HOGetSIPResponse(){
 
 SIP::SIPState TransactionEntry::HOCTimeout(){
 	// FIXME not sure if need to do it: no one cares..
-	LOG(ERR) << "handover: sending 480 Temporarily Unavailable";
+	LOG(DEBUG) << "handover: sending 480 Temporarily Unavailable";
 	ScopedLock lock(mLock);
 	SIP::SIPState state = mSIP.HOCSendTemporarilyUnavailable();
 	echoSIPState(state);
@@ -1068,14 +1064,7 @@ SIP::SIPState TransactionEntry::HOCTimeout(){
 // Send Handover Command to move the current call
 void TransactionEntry::HOSendHandoverCommand(GSM::L3CellDescription wCell,
 		GSM::L3ChannelDescription wChan, unsigned wHandoverReference){
-/*
-	if(!mHOAllowed) {
-		LOG(ERR) << "handover is not allowed now; handover Command is not sent";
-		return;
-	}
-*/
-	LOG(ERR) << "handover Command, " << wCell << ", " << wChan << ", " << wHandoverReference;
-//	mHOAllowed = false;
+	LOG(DEBUG) << "handover Command, " << wCell << ", " << wChan << ", " << wHandoverReference;
 	mChannel->send(L3HandoverCommand(wCell, wChan, wHandoverReference));
 }
 
@@ -1083,9 +1072,8 @@ void TransactionEntry::HOSendHandoverCommand(GSM::L3CellDescription wCell,
 void TransactionEntry::cutHandoverTail(GSM::LogicalChannel* wChannel){
 // remove "proxy" flag
 // send bye to the tail
-	LOG(ERR) << "making transaction \'a normal one\'..";
+	LOG(DEBUG) << "making transaction \'a normal one\'..";
 	ScopedLock lock(mLock);
-	LOG(ERR) << "making transaction \'a normal one\'....";
 	mProxyTransaction = false;
 	gBTS.handover().removeProxy(this);
 	mChannel = wChannel;
@@ -1283,7 +1271,6 @@ TransactionEntry* TransactionTable::findBySACCH(const GSM::SACCHLogicalChannel *
 		if (itr->second->deadOrRemoved()) continue;
 
 		if(itr->second->SIPState() == HO_Proxy) {
-			LOG(ERR) << "skipping handover proxy in find()";
 			continue;
 		}
 
@@ -1564,9 +1551,6 @@ bool TransactionEntry::HOSetupFinished(){
 	
 	if(resp_code == 0) return false;
 	
-	LOG(ERR) << "outgoing handover attempt, state is " << SIPState() <<
-		", SIP resp is "<< resp_code;
-
 	switch(resp_code){
 		case 183:
 			char cell[100];
@@ -1576,7 +1560,6 @@ bool TransactionEntry::HOSetupFinished(){
 			if(handoverTarget(cell, chan , &reference)){
 
 				// now we need to issue Handover Command
-				LOG(ERR) << "handover to " << cell << "; " << chan << "; " << reference;
 				unsigned bcc, ncc, c0 ;
 				unsigned tn, tsc, arfcn;
 				char *p;
@@ -1594,14 +1577,11 @@ bool TransactionEntry::HOSetupFinished(){
 				p = strstr(chan,"ARFCN="); 
 				sscanf(p+strlen("ARFCN="),"%u",&arfcn);
 
-				LOG(ERR) << "sending handover Command for transaction" << callingTransaction();
-				
 				callingTransaction()->HOSendHandoverCommand(
 					L3CellDescription(bcc,ncc,c0),
 					L3ChannelDescription(TCHF_0,tn,tsc,arfcn),
 					reference);
 				
-				LOG(ERR) << "changing state to " << SIPState();
 				return false;
 			}
 			else LOG(ERR) << "handover target is unknown";
@@ -1610,7 +1590,7 @@ bool TransactionEntry::HOSetupFinished(){
 		case 200:		
 			// we were waiting for SIP 200
 			// to send re-invite and turn the original transaction into proxy
-			LOG(ERR) << "got SIP 200 OK for handover, decoding sdp";
+			LOG(DEBUG) << "got SIP 200 OK for handover, decoding sdp";
 		
 			char ip[20], port_str[10];
 			short port;
@@ -1639,7 +1619,7 @@ bool TransactionEntry::HOSetupFinished(){
 /* just now - dummy functions */
 
 void TransactionEntry::HOProxy_forward_msg(osip_message_t *event){
-	LOG(ERR) << "handover debug: DUMMY function (!)" << event->sip_method;
+	LOG(DEBUG) << "handover debug: DUMMY function (!)" << event->sip_method;
 	osip_message_free(event);
 	return;
 }
@@ -1650,13 +1630,6 @@ void TransactionEntry::HOSendBYE(bool flip_loop){
 }
 
 vector <int> TransactionEntry::average(GSM::L3MeasurementResults wMeasurementResults, double wWeights){
-	/*LOG(ERR) << "meas 1, No=" << wMeasurementResults.NO_NCELL();
-	for(int i=0;i<wMeasurementResults.NO_NCELL();i++){
-		mAveragedMeasurements[i] = wMeasurementResults.RXLEV_NCELL_dBm(i);
-	}
-	LOG(ERR) << "meas 2";
-	mAveragedMeasurements[6] = wMeasurementResults.RXLEV_FULL_SERVING_CELL_dBm();
-*/
 
 	for(int i=0;i<wMeasurementResults.NO_NCELL();i++){
 		mAveragedMeasurements[i] = 

@@ -372,7 +372,7 @@ unsigned allocateRTPPorts(); // in CallControl.cpp
 void callManagementLoop(TransactionEntry *transaction, GSM::TCHFACCHLogicalChannel* TCH);	
 
 void Control::HandoverCompleteHandler(const GSM::L3HandoverComplete *confirm, GSM::LogicalChannel *DCCH){
-	LOG(ERR) << "handover complete";
+	LOG(DEBUG) << "handover complete";
 	gBTS.handover().showHandovers();
 	
 	assert(confirm);
@@ -395,7 +395,7 @@ void Control::HandoverCompleteHandler(const GSM::L3HandoverComplete *confirm, GS
 		transaction->HOCSendOK(rtpPort, SIP::RTPGSM610);
 	}
 	else{
-		LOG(ERR) << "flipping handover loop";
+		LOG(INFO) << "flipping handover loop";
 		transaction->HOCTimeout();
 		transaction = existingTransaction;
 		char ip[20];
@@ -416,11 +416,10 @@ void Control::HandoverCompleteHandler(const GSM::L3HandoverComplete *confirm, GS
 }
 
 void Control::HandoverFailureHandler(const GSM::L3HandoverFailure *failure, GSM::LogicalChannel *DCCH){
-	LOG(ERR) << "handover failed";
+	LOG(INFO) << "handover failed";
 	
 	assert(failure);
 	assert(DCCH);
-	LOG(ERR) << "handover failure: " << *failure;
 	
 	TransactionEntry* transaction = gTransactionTable.find(DCCH);
 	if(transaction==NULL) {	
@@ -615,29 +614,25 @@ Handover::Handover(){
 	inFile.close();
 	
 	for(int i=0;i<mNeighborAddresses.size();i++){
-		LOG(ERR) << "ARFCN=" << mNeighborArfcns[i] << " -> " << mNeighborAddresses[i].c_str();
+		LOG(DEBUG) << "ARFCN=" << mNeighborArfcns[i] << " -> " << mNeighborAddresses[i].c_str();
 	}
 }
 
 void Handover::BTSDecision(Control::TransactionEntry* transaction, GSM::L3MeasurementResults wMeasurementResults){
-//	LOG(ERR) << "handover BTS decision: entry" << wMeasurementResults;
 	if(mBTSDesicion && gConfig.getNum("GSM.Handover.BTS.Enable")) {
 		if(wMeasurementResults.NO_NCELL() == 0) {
 			LOG(DEBUG) << "handover BTS decision: no useful data: " << wMeasurementResults;
 			return;
 		}
 		
-//		LOG(ERR) << "handover BTS decision: preparing to average";
 		vector <int> averaged = transaction->average(wMeasurementResults,atof(gConfig.getStr("GSM.Handover.BTS.Weights").c_str()));
 		
-//		LOG(ERR) << "handover BTS decision: after averaging";
 		if(! transaction->handoverAllowed()) return;
 		
-//		LOG(ERR) << "handover BTS decision: " << transaction->channel() << ", serving (dBm) : " << averaged[6];
 		int max,index,diff;
 		for(int i=0, index=max=0;i<wMeasurementResults.NO_NCELL();i++){
 			diff = averaged[i] - averaged[6];
-			LOG(ERR) << transaction->subscriber() << ", neighbor " << mNeighborAddresses[i] << "/"<< mNeighborArfcns[i] << ", delta=" << diff << "dB";
+			LOG(DEBUG) << transaction->subscriber() << ", neighbor " << mNeighborAddresses[i] << "/"<< mNeighborArfcns[i] << ", delta=" << diff << "dB";
 			if(diff>max) { max = diff, index = i; }
 		}
 		
@@ -650,7 +645,7 @@ void Handover::BTSDecision(Control::TransactionEntry* transaction, GSM::L3Measur
 	}
 	else {
 		// I think need to forward measurement results to a core network element
-		LOG(ERR) << "handover decision at BTS is prohibited";
+		LOG(WARNING) << "handover decision at BTS is prohibited";
 	}
 }
 
@@ -791,7 +786,7 @@ bool HandoverEntry::removeHandoverEntry(){
 
 
 void HandoverEntry::status(const char *intro){
-	LOG(ERR) << intro << " TA=" <<  mInitialTA << ", sent=" << mPhysicalInfoAttempts <<
+	LOG(DEBUG) << intro << " TA=" <<  mInitialTA << ", sent=" << mPhysicalInfoAttempts <<
 		", Ny1=" << mNy1 << ", chan=" << mTCH <<
 		", gotHA=" << mGotHA << ", gotHC=" << mGotHComplete <<
 		", regDone=" << mRegisterPerformed << ", ref=" << mHandoverReference <<
@@ -876,7 +871,6 @@ void Handover::handoverAccess(unsigned wTN, int initialTA){
 			return;
 		}
 	}
-	LOG(ERR) << "no handover at TN=" << wTN;
 	showHandovers();
 }
 
@@ -898,7 +892,6 @@ void Handover::handoverComplete(unsigned wTN){
 			return;
 		}
 	}
-	LOG(ERR) << "no handover at TN=" << wTN;
 	showHandovers();
 }
 
@@ -988,31 +981,28 @@ bool Handover::performHandover(const GSM::L3MobileIdentity& wSubscriber,
 	// find transaction which serves a call leg
 	Control::TransactionEntry* transaction= gTransactionTable.find(wSubscriber,GSM::Active);
 	if(transaction==NULL) {
-		LOG(ERR) << "request for handover: transaction with IMSI not found " << wSubscriber;
+		LOG(WARNING) << "request for handover: transaction with IMSI not found " << wSubscriber;
 		return false;
 	}
 	
 	if(! (transaction->handoverLock())) {
-		LOG(ERR) << "second handover attempt for transaction: refused";
+		LOG(DEBUG) << "second handover attempt for transaction: refused";
 		return false;
 	}
 	
 	// fetch key params for handover
-	LOG(ERR) << "\"old\" handover transaction: " << *transaction;
 	unsigned codec = transaction->codec();
 	short destRTPPort = transaction->destRTPPort();
 	char* destRTPIp = transaction->destRTPIp();
 	unsigned l3ti = transaction->L3TI();
 
-	LOG(ERR) << "freeswitch endpoint is " << destRTPIp << ":" << destRTPPort;
-	
 	// create a temporary transaction and start the procedure
 	Control::TransactionEntry *newTransaction = 
 		new Control::TransactionEntry(transaction, wSubscriber, 
 				whichBTS,
 				l3ti, destRTPIp, destRTPPort, codec);
 	
-	LOG(ERR) << "\"temporary\" transaction created, handover Invite sent";
+	LOG(DEBUG) << "\"temporary\" transaction created, handover Invite sent";
 	
 	mOutgoingHandovers.push_back(OutgoingHandover(newTransaction));
 	gTransactionTable.add(newTransaction);
@@ -1022,7 +1012,6 @@ bool Handover::performHandover(const GSM::L3MobileIdentity& wSubscriber,
 
 void Handover::showOutgoingHandovers(){
 	ScopedLock lock(mLock);
-	LOG(WARNING) << "active outgoing handovers:";
 	for (OutgoingHandoverList::iterator lp = mOutgoingHandovers.begin(); lp != mOutgoingHandovers.end(); lp++) {
 		lp->status();
 	}
@@ -1060,7 +1049,7 @@ void Handover::removeProxy(Control::TransactionEntry *mscTransaction){
 bool OutgoingHandover::isFinished(){
 	
 	if(mDestroyTail) {
-		LOG(ERR) << "removing outgoing handover proxy";
+		LOG(DEBUG) << "removing outgoing handover proxy";
 		mTransactionHO->MODSendBYE();
 		gSIPInterface.removeCall(mTransactionHO->SIPCallID());
 		gTransactionTable.remove(mTransactionHO);
@@ -1070,37 +1059,32 @@ bool OutgoingHandover::isFinished(){
 	osip_message_t *msg;
 	bool term = false;
 	
-	//LOG(ERR) << "processing outgoing handover";
-	
 	if(mTransactionHO->SIPState() != HO_Proxy){
-		//LOG(ERR) << "outgoing handover, SETUP PHASE";
 		if(mT3103.expired()){
-			LOG(ERR) << "outgoing handover timeout";
+			LOG(DEBUG) << "outgoing handover timeout";
 			gSIPInterface.removeCall(mTransactionHO->SIPCallID());
 			gTransactionTable.remove(mTransactionHO);
 			return true;
 		}
 		
 		if(mTransactionHO->HOSetupFinished()){
-			LOG(ERR) << "outgoing handover failed";
+			LOG(DEBUG) << "outgoing handover failed";
 			gSIPInterface.removeCall(mTransactionHO->SIPCallID());
 			gTransactionTable.remove(mTransactionHO);
 			return true;
 		}
 		else if(mTransactionHO->SIPState() == HO_Proxy){
-			LOG(ERR) << "outgoing handover succeed. It is proxy now";
+			LOG(DEBUG) << "outgoing handover succeed. It is proxy now";
 			mTransactionMSC = mTransactionHO->callingTransaction();
 		}
 		return false;
 	}
 
 	
-//	LOG(ERR) << "outgoing handover, PROXY PHASE";
-		
 	// Proxy activites;
 	msg = mTransactionHO->HOGetSIPMessage();
 	if(msg != NULL) {
-		LOG(ERR) << "msg from the tail, after handover, method=" << msg->sip_method;
+		LOG(DEBUG) << "msg from the tail, after handover, method=" << msg->sip_method;
 		term = HOProxyUplinkSM(msg, mTransactionHO, mTransactionMSC);
 	}
 	if(term) {
@@ -1116,7 +1100,7 @@ bool OutgoingHandover::isFinished(){
 	
 	msg = mTransactionMSC->HOGetSIPMessage();
 	if(msg != NULL) {
-		LOG(ERR) << "msg from the MSC, after handover, method=" << msg->sip_method;
+		LOG(DEBUG) << "msg from the MSC, after handover, method=" << msg->sip_method;
 		term = HOProxyDownlinkSM(msg, mTransactionMSC, mTransactionHO);
 	}
 	if(term) {
@@ -1135,7 +1119,7 @@ bool OutgoingHandover::isFinished(){
 
 const char * OutgoingHandover::status() const{
 
-	LOG(ERR) << " outgoing handover transaction " << mTransactionHO << ", status=" << mTransactionHO->SIPState();
+	LOG(DEBUG) << " outgoing handover transaction " << mTransactionHO << ", status=" << mTransactionHO->SIPState();
 
 	if(mTransactionHO->SIPState() == HO_Proxy) return "handover performed";
 	else return "trying to perform handover";

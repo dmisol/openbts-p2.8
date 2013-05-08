@@ -142,7 +142,7 @@ void forceSIPClearing(TransactionEntry *transaction)
 	if (transaction->SIPFinished()) return;
 	if (state==SIP::Active){
 		//Changes state to clearing
-		LOG(ERR) << "handover debug; BYE from forceSIPClearing()";
+		LOG(DEBUG) << "handover debug; BYE from forceSIPClearing()";
 		transaction->MODSendBYE();
 		//then cleared
 		transaction->MODWaitForBYEOK();
@@ -290,7 +290,7 @@ bool assignTCHF(TransactionEntry *transaction, GSM::LogicalChannel *DCCH, GSM::T
 	transaction->channel(NULL);
 	
 	// Shut down the SIP side of the call.
-	LOG(ERR) << "handover debug; forceSIPClearing() from aassignTCHF()";		
+	LOG(DEBUG) << "handover debug; forceSIPClearing() from aassignTCHF()";		
 	forceSIPClearing(transaction);
 	// Indicate failure.
 	return false;
@@ -386,7 +386,7 @@ bool callManagementDispatchGSM(TransactionEntry *transaction, GSM::LogicalChanne
 		transaction->GSMState(GSM::ReleaseRequest);
 		//bug #172 fixed
 		if (transaction->SIPState()==SIP::Active){
-			LOG(ERR) << "handover debug; BYE from ..DispatchGSM()";
+			LOG(DEBUG) << "handover debug; BYE from ..DispatchGSM()";
 			transaction->MODSendBYE();
 			transaction->MODWaitForBYEOK();
 		}
@@ -451,7 +451,7 @@ bool callManagementDispatchGSM(TransactionEntry *transaction, GSM::LogicalChanne
 		// The IMSI detach procedure will release the LCH.
 		LOG(INFO) << "GSM IMSI Detach " << *transaction;
 		IMSIDetachController(detach,LCH);
-		LOG(ERR) << "handover debug; forceSIPClearing() from dispatchGSM() - phone off";		
+		LOG(DEBUG) << "handover debug; forceSIPClearing() from dispatchGSM() - phone off";		
 		forceSIPClearing(transaction);
 		return true;
 	}
@@ -610,7 +610,7 @@ bool updateGSMSignalling(TransactionEntry *transaction, GSM::LogicalChannel *LCH
 
 	// Any Q.931 timer expired?
 	if (transaction->anyTimerExpired()) {
-		LOG(ERR) << "handover debug transaction->anyTimerExpired()";
+		LOG(DEBUG) << "handover debug transaction->anyTimerExpired()";
 		// Cause 0x66, "recover on timer expiry"
 		abortCall(transaction,LCH,GSM::L3Cause(0x66));
 		return true;
@@ -703,7 +703,7 @@ bool pollInCall(TransactionEntry *transaction, GSM::TCHFACCHLogicalChannel *TCH)
 {
 	if(transaction->proxyTransaction()){
 		transaction->channel(NULL);
-		LOG(ERR) << "since this moment a transaction is acting as SIP proxy due to handover";
+		LOG(DEBUG) << "since this moment a transaction is acting as SIP proxy due to handover";
 		return true;
 	}
 
@@ -722,7 +722,7 @@ bool pollInCall(TransactionEntry *transaction, GSM::TCHFACCHLogicalChannel *TCH)
 
 	// Did an outside process request a termination?
 	if (transaction->terminationRequested()) {
-		LOG(ERR) << "handover debug transaction->terminationRequested()";
+		LOG(DEBUG) << "handover debug transaction->terminationRequested()";
 		// Cause 25 is "pre-emptive clearing".
 		abortCall(transaction,TCH,25);
 		// Do the hard release to short-cut the timers.
@@ -1326,7 +1326,7 @@ bool Control::HOProxyDownlinkSM(
 
 	assert(event);
 	if(MSG_IS_RESPONSE(event)) {
-		LOG(ERR) << "handover proxy downlink: resp " << event->status_code << "(" << event->cseq->method << ")";
+		LOG(DEBUG) << "handover proxy downlink: resp " << event->status_code << "(" << event->cseq->method << ")";
 		if(event->status_code == 200){
 			if(strstr(event->cseq->method,"INVITE")){
 			// .. in response to re-invite, send ack
@@ -1345,25 +1345,25 @@ bool Control::HOProxyDownlinkSM(
 
 		}
 		else if(event->status_code < 200){
-		LOG(ERR) << "  handover proxy downlink: ignoring" << event->status_code << "(" << event->cseq->method << ")";
+		LOG(DEBUG) << "  handover proxy downlink: ignoring" << event->status_code << "(" << event->cseq->method << ")";
 			
 				osip_message_free(event);
 				return false;
 		}
-		LOG(ERR) << "  handover proxy downlink: unexpected response" << event->status_code << "(" << event->cseq->method << ")";
+		LOG(WARNING) << "  handover proxy downlink: unexpected response" << event->status_code << "(" << event->cseq->method << ")";
 		osip_message_free(event);
 		return false;
 	}
 	
 	if(MSG_IS_BYE(event)){
-		LOG(ERR) << "handover proxy downlink: got BYE, relaying";
+		LOG(DEBUG) << "handover proxy downlink: got BYE, relaying";
 		
 		tail->HOSendBYE(false);
 		osip_message_free(event);
 		return true;
 	}
 	
-	LOG(ERR) << "handover proxy downlink: need to relay " << event->sip_method;
+	LOG(DEBUG) << "handover proxy downlink: need to relay " << event->sip_method;
 	tail->HOProxy_forward_msg(event);
 					
 	return false;
@@ -1374,7 +1374,7 @@ bool Control::HOProxyUplinkSM(
 	
 	assert(event);
 	if(MSG_IS_RESPONSE(event)) {
-		LOG(ERR) << "handover proxy uplink: resp " << event->status_code << "(" << event->cseq->method << ")";
+		LOG(DEBUG) << "handover proxy uplink: resp " << event->status_code << "(" << event->cseq->method << ")";
 		if(event->status_code == 200){
 			if(strstr(event->cseq->method,"BYE")){
 			// .. BYE is acknowledged
@@ -1382,14 +1382,14 @@ bool Control::HOProxyUplinkSM(
 			return false;
 			}
 		}
-		LOG(ERR) << "  handover proxy uplink: unexpected response" 
+		LOG(DEBUG) << "  handover proxy uplink: unexpected response" 
 			<< event->status_code << "(" << event->cseq->method << ")";
 		osip_message_free(event);
 		return false;
 	}
 	
 	if(MSG_IS_BYE(event)){
-		LOG(ERR) << "handover proxy: relaying BYE ";
+		LOG(DEBUG) << "handover proxy: relaying BYE ";
 		
 		msc->MODSendBYE();
 		osip_message_free(event);
@@ -1401,12 +1401,12 @@ bool Control::HOProxyUplinkSM(
 		// need to ACK it with 200 and send further
 		// FIXME: I'm not waiting for 200 any more
 		tail->HOSendOK(event);
-		LOG(ERR) << "handover-proxy relaying DTMF" << event->bodies.node->element;
+		LOG(DEBUG) << "handover-proxy relaying DTMF" << event->bodies.node->element;
 		msc->HOCSendINFO(event->bodies.node->element);
 		osip_message_free(event);
 	}
 	
-	LOG(ERR) << "handover proxy uolink: need to relay " << event->sip_method;
+	LOG(DEBUG) << "handover proxy uplink: need to relay " << event->sip_method;
 	msc->HOProxy_forward_msg(event);
 					
 	return false;
